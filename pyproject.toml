@@ -1,0 +1,42 @@
+[project]
+name = "music-collection-automation"
+version = "0.1.0"
+description = "Automate downloading tracks from Spotify playlists by comparing with rekordbox collection"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "playwright>=1.40.0",
+    "pyrekordbox>=0.2.0",
+    "requests>=2.31.0",
+    "beautifulsoup4>=4.12.0",
+    "rapidfuzz>=3.5.0",
+    "ddgs>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.1.0",
+    "mypy>=1.7.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = []
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+
