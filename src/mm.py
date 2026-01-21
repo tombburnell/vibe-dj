@@ -10,9 +10,12 @@ import argparse
 import logging
 import sys
 from pathlib import Path
+from typing import Any
 
 from rapidfuzz import fuzz
 
+from .amazon_music import AmazonSearchResult
+from .amazon_service import calculate_url_score, search_amazon_for_track
 from .library_db import LibraryDB, LibraryTrack
 from .rekordbox_index import RekordboxIndex
 from .rekordbox_tsv_parser import RekordboxTSVParser
@@ -32,6 +35,8 @@ def format_duration(duration_ms: int | None) -> str:
     minutes = total_seconds // 60
     seconds = total_seconds % 60
     return f"{minutes}:{seconds:02d}"
+
+
 
 
 def parse_duration_to_ms(duration_str: str) -> int | None:
@@ -446,6 +451,9 @@ def match_spotify(
     db_path: Path = Path("music.db"),
     rekordbox_tsv_path: Path | None = None,
     limit: int = 20,
+    exclude_matching: bool = False,
+    with_amazon_links: bool = False,
+    sort_by_url_score: bool = False,
 ) -> None:
     """Match Spotify playlist tracks against Rekordbox collection.
 
@@ -453,6 +461,10 @@ def match_spotify(
         csv_path: Path to Spotify playlist CSV file
         db_path: Path to SQLite database
         rekordbox_tsv_path: Optional path to Rekordbox TSV file (if not in DB)
+        limit: Maximum number of Spotify tracks to process (default: 20)
+        exclude_matching: Exclude tracks with matches ≥90 (default: False)
+        with_amazon_links: Fetch Amazon Music links with caching (default: False)
+        sort_by_url_score: Sort results by URL score (highest first) when using --with-amazon-links (default: False)
     """
     logger.info(f"Parsing Spotify playlist: {csv_path}")
     extractor = SpotifyPlaylistExtractor()
@@ -503,10 +515,19 @@ def match_spotify(
 
     logger.info(f"Index built: {len(index.tracks)} tracks, {len(index.token_index)} tokens")
 
+    logger.info("Amazon link fetching enabled (with caching)" if with_amazon_links else "Amazon link fetching disabled")
+
     # Match each Spotify track (limit to first N tracks)
-    results: list[tuple[int, object, list[tuple[LibraryTrack, float]]]] = []
+    # Updated tuple: (track_num, spotify_track, matches, amazon_url, amazon_price, amazon_page_title, from_cache, url_score)
+    results: list[tuple[int, object, list[tuple[LibraryTrack, float]], str | None, str | None, str | None, bool, float]] = []
     total_tracks = len(spotify_tracks)
     tracks_to_process = spotify_tracks[:limit] if limit > 0 else spotify_tracks
+
+    # Log processing start BEFORE the loop (so user knows what's happening during the delay)
+    if total_tracks > limit:
+        logger.info(f"Processing {len(tracks_to_process)} of {total_tracks} tracks (limit: {limit})...")
+    else:
+        logger.info(f"Processing {total_tracks} tracks...")
 
     for idx, spotify_track in enumerate(tracks_to_process, start=1):
         # Generate tokens from Spotify track (title + artist + album)
@@ -517,9 +538,79 @@ def match_spotify(
         # Get candidates from index
         candidate_ids = index.get_candidates(spotify_tokens, max_candidates=50)
 
+        # Fetch Amazon link if requested
+        amazon_url: str | None = None
+        amazon_price: str | None = None
+        amazon_page_title: str | None = None
+        from_cache = False
+        
+        if with_amazon_links:
+            try:
+                import time
+                from .amazon_cache import AmazonCache, generate_cache_key
+                
+                # Check cache first before any delays
+                cache = AmazonCache()
+                cache_key = generate_cache_key(spotify_track.artist, spotify_track.title, spotify_track.album)
+                cached_results = cache.get(cache_key)
+                
+                if cached_results is not None:
+                    # Results are cached (either found or "no results" marker)
+                    from_cache = True
+                    if cached_results and cached_results[0].url:
+                        result = cached_results[0]
+                        amazon_url = result.url
+                        amazon_price = result.price
+                        amazon_page_title = result.page_title
+                        
+                        # If page_title is missing, construct it from the search result title/artist
+                        if not amazon_page_title:
+                            if result.title and result.artist:
+                                amazon_page_title = f"{result.title} - {result.artist}"
+                            elif result.title:
+                                amazon_page_title = result.title
+                            elif result.artist:
+                                amazon_page_title = result.artist
+                        logger.debug(f"Using cached Amazon link for {spotify_track.title}")
+                else:
+                    # Not in cache - need to search (with rate limiting)
+                    # Rate limiting: 2 second delay between searches
+                    if idx > 1:
+                        time.sleep(2.0)
+                    
+                    search_results, _ = search_amazon_for_track(
+                        artist=spotify_track.artist,
+                        title=spotify_track.title,
+                        album=spotify_track.album,
+                        use_cache=True,
+                        max_results=1,
+                    )
+                    
+                    if search_results and search_results[0].url:
+                        result = search_results[0]
+                        amazon_url = result.url
+                        amazon_price = result.price
+                        amazon_page_title = result.page_title
+                        
+                        # If page_title is missing, construct it from the search result title/artist
+                        if not amazon_page_title:
+                            if result.title and result.artist:
+                                amazon_page_title = f"{result.title} - {result.artist}"
+                            elif result.title:
+                                amazon_page_title = result.title
+                            elif result.artist:
+                                amazon_page_title = result.artist
+                        
+                        logger.info(f"Found Amazon link for {spotify_track.title} by {spotify_track.artist}")
+            except Exception as e:
+                logger.warning(f"Failed to search Amazon for {spotify_track.title}: {e}")
+
+        # Calculate URL score if we have Amazon data (pass URL for track/album boost)
+        url_score = calculate_url_score(amazon_page_title, spotify_track.title, spotify_track.artist, amazon_url) if amazon_page_title else 0.0
+        
         if not candidate_ids:
             # No matches found
-            results.append((idx, spotify_track, []))
+            results.append((idx, spotify_track, [], amazon_url, amazon_price, amazon_page_title, from_cache, url_score))
             continue
 
         # Score each candidate
@@ -572,26 +663,69 @@ def match_spotify(
         # Sort by score descending
         matches.sort(key=lambda x: x[1], reverse=True)
 
+        # If exclude_matching is True, skip tracks that have matches ≥90
+        if exclude_matching:
+            has_good_match = any(score >= 90.0 for _, score in matches)
+            if has_good_match:
+                continue  # Skip this track
+
         # Keep top matches
-        results.append((idx, spotify_track, matches))
+        results.append((idx, spotify_track, matches, amazon_url, amazon_price, amazon_page_title, from_cache, url_score))
+
+    # Sort results by URL score if requested (only when using --with-amazon-links)
+    if sort_by_url_score and with_amazon_links:
+        results.sort(key=lambda x: x[7], reverse=True)  # x[7] is url_score, sort descending
 
     # Display results
     print()
-    if total_tracks > limit:
-        logger.info(f"Processing {len(tracks_to_process)} of {total_tracks} tracks (limit: {limit})")
-    else:
-        logger.info(f"Processing {total_tracks} tracks")
+    logger.info(f"Completed processing {len(results)} tracks")
     print()
-    print(f"{'#':<4} {'Spotify Title':<40} {'Spotify Artist':<30} {'Score':<8} {'≥90':<5} {'Match Title':<40} {'Match Artist':<30} {'Filename':<50} {'Status':<6}")
-    print("-" * 220)
+    # Build header based on whether Amazon links are shown
+    # Spotify Title: 32 (4/5 of 40), Spotify Artist: 24 (4/5 of 30)
+    # Amazon URL column: ~87 characters (67 + 20)
+    amazon_url_col_width = 87
+    if with_amazon_links:
+        print(f"{'#':<4} {'Spotify ID':<22} {'Spotify Title':<32} {'Spotify Artist':<24} {'URL Score':<10} {'Amazon URL':<{amazon_url_col_width}} {'Existing':<8}")
+        print("-" * (4 + 22 + 32 + 24 + 10 + amazon_url_col_width + 8))
+    else:
+        print(f"{'#':<4} {'Spotify Title':<32} {'Spotify Artist':<24} {'Score':<8} {'≥90':<5} {'Match Title':<40} {'Match Artist':<30} {'Filename':<50} {'Existing':<8}")
+        print("-" * 202)
 
-    for track_num, spotify_track, matches in results:
-        title_display = spotify_track.title[:38] + ".." if len(spotify_track.title) > 40 else spotify_track.title
-        artist_display = spotify_track.artist[:28] + ".." if len(spotify_track.artist) > 30 else spotify_track.artist
+    for track_num, spotify_track, matches, amazon_url, amazon_price, amazon_page_title, from_cache, url_score in results:
+        # Spotify Title: 32 chars, Artist: 24 chars (4/5 of original)
+        title_display = spotify_track.title[:30] + ".." if len(spotify_track.title) > 32 else spotify_track.title
+        artist_display = spotify_track.artist[:22] + ".." if len(spotify_track.artist) > 24 else spotify_track.artist
+        spotify_id_display = spotify_track.spotify_id or "N/A"
 
         if not matches:
             # No matches
-            print(f"{track_num:<4} {title_display:<40} {artist_display:<30} {'0.0':<8} {'0':<5} {'No match':<40} {'':<30} {'':<50} {'❌':<6}")
+            if with_amazon_links:
+                amazon_display = ""
+                if amazon_url:
+                    # Show full Amazon URL
+                    cache_indicator = " (c)" if from_cache else ""
+                    url_with_indicator = f"{amazon_url}{cache_indicator}"
+                    
+                    # Calculate available space for title (column width minus URL and separator)
+                    available_space = amazon_url_col_width - len(url_with_indicator) - 3  # -3 for " | "
+                    
+                    if amazon_page_title:
+                        # Show as much title as fits in the available column width
+                        if len(amazon_page_title) <= available_space:
+                            amazon_display = f"{url_with_indicator} | {amazon_page_title}"
+                        else:
+                            truncated_title = amazon_page_title[:available_space - 2] + ".."
+                            amazon_display = f"{url_with_indicator} | {truncated_title}"
+                    else:
+                        amazon_display = f"{url_with_indicator} | null"
+                else:
+                    amazon_display = "Not found"
+                # Show URL score when with_amazon_links, otherwise show 0.0 for match score
+                score_display = f"{url_score:>6.1f}" if with_amazon_links else "0.0"
+                existing_display = "✅" if matches and any(score >= 90.0 for _, score in matches) else "❌"
+                print(f"{track_num:<4} {spotify_id_display:<22} {title_display:<32} {artist_display:<24} {score_display:<10} {amazon_display:<{amazon_url_col_width}} {existing_display:<8}")
+            else:
+                print(f"{track_num:<4} {title_display:<32} {artist_display:<24} {'0.0':<8} {'0':<5} {'No match':<40} {'':<30} {'':<50} {'❌':<6}")
         else:
             # Count matches ≥90
             matches_90_plus = sum(1 for _, score in matches if score >= 90.0)
@@ -604,11 +738,38 @@ def match_spotify(
                 filename = "..." + filename[-45:]
 
             status = "✅" if best_score >= 90.0 else "❌"
+            existing_display = "✅" if best_score >= 90.0 else "❌"
 
-            print(f"{track_num:<4} {title_display:<40} {artist_display:<30} {best_score:>6.1f}  {matches_90_plus:<5} {best_title:<40} {best_artist:<30} {filename:<50} {status:<6}")
+            if with_amazon_links:
+                # Format Amazon URL for display (full URL)
+                amazon_display = ""
+                if amazon_url:
+                    # Show full Amazon URL
+                    cache_indicator = " (c)" if from_cache else ""
+                    url_with_indicator = f"{amazon_url}{cache_indicator}"
+                    
+                    # Calculate available space for title (column width minus URL and separator)
+                    available_space = amazon_url_col_width - len(url_with_indicator) - 3  # -3 for " | "
+                    
+                    if amazon_page_title:
+                        # Show as much title as fits in the available column width
+                        if len(amazon_page_title) <= available_space:
+                            amazon_display = f"{url_with_indicator} | {amazon_page_title}"
+                        else:
+                            truncated_title = amazon_page_title[:available_space - 2] + ".."
+                            amazon_display = f"{url_with_indicator} | {truncated_title}"
+                    else:
+                        amazon_display = f"{url_with_indicator} | null"
+                else:
+                    amazon_display = "Not found"
+                # Show URL score (not best_score) when with_amazon_links is enabled
+                print(f"{track_num:<4} {spotify_id_display:<22} {title_display:<32} {artist_display:<24} {url_score:>6.1f}  {amazon_display:<{amazon_url_col_width}} {status:<6}")
+            else:
+                # Show full match details
+                print(f"{track_num:<4} {title_display:<32} {artist_display:<24} {best_score:>6.1f}  {matches_90_plus:<5} {best_title:<40} {best_artist:<30} {filename:<50} {existing_display:<8}")
 
-            # Show second match if available and different from first
-            if len(matches) > 1:
+            # Show second match if available and different from first (only when not showing Amazon links)
+            if len(matches) > 1 and not with_amazon_links:
                 second_match, second_score = matches[1]
                 second_title = second_match.title[:38] + ".." if len(second_match.title) > 40 else second_match.title
                 second_artist = second_match.artist[:28] + ".." if len(second_match.artist) > 30 else second_match.artist
@@ -616,10 +777,95 @@ def match_spotify(
                 if len(second_filename) > 48:
                     second_filename = "..." + second_filename[-45:]
                 second_status = "✅" if second_score >= 90.0 else "❌"
-                print(f"{'':<4} {'':<40} {'':<30} {second_score:>6.1f}  {'':<5} {second_title:<40} {second_artist:<30} {second_filename:<50} {second_status:<6}")
+                print(f"{'':<4} {'':<32} {'':<24} {second_score:>6.1f}  {'':<5} {second_title:<40} {second_artist:<30} {second_filename:<50} {second_status:<6}")
 
     print()
     db.close()
+
+
+def get_amazon_link(artist: str, title: str) -> None:
+    """Search Amazon Music for a track and display search queries and results.
+    
+    Uses the shared Amazon search service.
+    
+    Args:
+        artist: Artist name
+        title: Track title
+    """
+    # Use shared service
+    search_results, queries = search_amazon_for_track(
+        artist=artist,
+        title=title,
+        use_cache=True,
+        max_results=10,
+    )
+    
+    print(f"\nSearching for: {title} by {artist}\n")
+    print("Search queries:")
+    for i, query in enumerate(queries, 1):
+        print(f"  {i}. {query}")
+    print()
+    
+    if not search_results:
+        print("No results found.")
+        return
+    
+    # Show top 10 results (or all if less than 10)
+    results_to_show = search_results[:10]
+    
+    print(f"Found {len(search_results)} result(s), showing top {len(results_to_show)}:\n")
+    print(f"{'#':<4} {'URL Score':<12} {'Title':<40} {'Artist':<30} {'URL':<60}")
+    print("-" * 146)
+    
+    # Calculate scores with details
+    scored_results: list[tuple[AmazonSearchResult, float, dict[str, Any]]] = []
+    for result in results_to_show:
+        url_score, details = calculate_url_score(
+            result.page_title, title, artist, result.url, return_details=True
+        )
+        scored_results.append((result, url_score, details))
+    
+    # Sort by URL score descending
+    scored_results.sort(key=lambda x: x[1], reverse=True)
+    
+    for idx, (result, url_score, details) in enumerate(scored_results, 1):
+        # Format URL for display
+        url_display = result.url or "N/A"
+        if len(url_display) > 58:
+            url_display = url_display[:55] + "..."
+        
+        # Format title/artist for display
+        title_display = result.title[:38] + ".." if len(result.title) > 40 else result.title
+        artist_display = result.artist[:28] + ".." if len(result.artist) > 30 else result.artist
+        
+        print(f"{idx:<4} {url_score:>10.1f}  {title_display:<40} {artist_display:<30} {url_display:<60}")
+        
+        # Show token breakdown
+        print(f"     Title tokens: {', '.join(details['title_tokens'])}")
+        print(f"     Title scores: {', '.join(f'{k}:{v:.1f}' for k, v in details['title_token_scores'].items())}")
+        print(f"     Artist tokens: {', '.join(details['artist_tokens'])}")
+        artist_scores_str = []
+        for token, score in details['artist_token_scores'].items():
+            matched_token = details.get('artist_token_matches', {}).get(token)
+            if matched_token:
+                artist_scores_str.append(f'{token}:{score:.1f}(→{matched_token})')
+            else:
+                artist_scores_str.append(f'{token}:{score:.1f}(no match)')
+        print(f"     Artist scores: {', '.join(artist_scores_str)}")
+        print(f"     Amazon tokens: {', '.join(details['amazon_tokens'])}")
+        print(f"     Title coverage: {details['title_coverage']:.2f}, Artist coverage: {details['artist_coverage']:.2f}")
+        print(f"     Title score: {details['title_score']:.2f}, Artist score: {details['artist_score']:.2f}")
+        if details.get('remix_penalty', 0) != 0:
+            print(f"     Remix penalty: {details['remix_penalty']:.2f} (Amazon has remix/edit but Spotify doesn't)")
+        if details.get('url_boost', 0) != 0:
+            print(f"     URL boost: {details['url_boost']:.2f} (track URL)")
+        print()
+    
+    # Show page titles if available
+    print("Page titles:")
+    for idx, (result, _, _) in enumerate(scored_results, 1):
+        page_title = result.page_title or "N/A"
+        print(f"  {idx}. {page_title}")
 
 
 def main() -> None:
@@ -693,6 +939,21 @@ def main() -> None:
         default=20,
         help="Maximum number of Spotify tracks to process (default: 20)",
     )
+    match_parser.add_argument(
+        "--exclude-matching",
+        action="store_true",
+        help="Exclude tracks that have matches with score ≥90 (show only unmatched or low-score matches)",
+    )
+    match_parser.add_argument(
+        "--with-amazon-links",
+        action="store_true",
+        help="Fetch Amazon Music links for tracks (uses cache to avoid duplicate searches)",
+    )
+    match_parser.add_argument(
+        "--sort-by-url-score",
+        action="store_true",
+        help="Sort results by URL score (highest first) when using --with-amazon-links",
+    )
 
     # import-rekordbox command
     import_parser = subparsers.add_parser(
@@ -720,6 +981,24 @@ def main() -> None:
         "--add-unmatched",
         action="store_true",
         help="Add unmatched Rekordbox tracks as new LibraryTracks",
+    )
+
+    # get-amazon-link command
+    amazon_parser = subparsers.add_parser(
+        "get-amazon-link",
+        help="Search Amazon Music for a specific track and show search results",
+    )
+    amazon_parser.add_argument(
+        "--artist",
+        type=str,
+        required=True,
+        help="Artist name",
+    )
+    amazon_parser.add_argument(
+        "--title",
+        type=str,
+        required=True,
+        help="Track title",
     )
 
     args = parser.parse_args()
@@ -750,6 +1029,9 @@ def main() -> None:
             db_path=args.db,
             rekordbox_tsv_path=args.rekordbox_tsv,
             limit=args.limit,
+            exclude_matching=args.exclude_matching,
+            with_amazon_links=args.with_amazon_links,
+            sort_by_url_score=args.sort_by_url_score,
         )
     elif args.command == "import-rekordbox":
         if not args.tsv_file.exists():
@@ -762,6 +1044,12 @@ def main() -> None:
             min_confidence=args.min_confidence,
             add_unmatched=args.add_unmatched,
         )
+    elif args.command == "get-amazon-link":
+        if not args.artist or not args.title:
+            logger.error("Both --artist and --title are required")
+            sys.exit(1)
+        
+        get_amazon_link(artist=args.artist, title=args.title)
     else:
         parser.print_help()
         sys.exit(1)

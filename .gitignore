@@ -56,3 +56,6 @@ htmlcov/
 # Logs
 *.log
 
+# Cache files
+.amazon-cache
+

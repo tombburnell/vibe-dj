@@ -5,6 +5,7 @@ Searches Amazon Music for tracks and generates purchase/download links.
 
 from __future__ import annotations
 
+import logging
 import re
 import urllib.parse
 from dataclasses import dataclass
@@ -12,6 +13,8 @@ from typing import Any
 
 import requests
 from bs4 import BeautifulSoup
+
+logger = logging.getLogger(__name__)
 
 try:
     from spotify_client import Track
@@ -32,6 +35,7 @@ class AmazonSearchResult:
     url: str | None = None
     price: str | None = None
     match_score: float = 0.0
+    page_title: str | None = None  # HTML title of the Amazon page
 
 
 class AmazonMusicSearcher:
@@ -298,6 +302,19 @@ class AmazonMusicSearcher:
                             if "amazon.com" not in url.lower():
                                 continue
                             
+                            url_lower = url.lower()
+                            
+                            # Skip podcasts - only want tracks/albums
+                            if "/podcasts/" in url_lower or "/podcast/" in url_lower:
+                                continue
+                            
+                            # Only accept /tracks/ or /albums/ URLs
+                            is_track = "/tracks/" in url_lower
+                            is_album = "/albums/" in url_lower
+                            
+                            if not (is_track or is_album):
+                                continue  # Skip non-track/album URLs
+                            
                             # Skip if we've already seen this URL
                             if url in seen_urls:
                                 continue
@@ -305,7 +322,7 @@ class AmazonMusicSearcher:
                             
                             # Skip artist pages - prefer tracks/albums
                             # Artist pages typically have /artists/ in the URL
-                            is_artist_page = "/artists/" in url.lower()
+                            is_artist_page = "/artists/" in url_lower
                             
                             # Extract price if mentioned in body
                             price = None
@@ -313,15 +330,19 @@ class AmazonMusicSearcher:
                             if price_match:
                                 price = price_match.group(0)
                             
-                            # Try to extract artist/title from title or body
+                            # Try to extract artist/title from DuckDuckGo title or body
                             artist = track.artist  # Default to original
                             result_title = track.title  # Default to original
                             
+                            # DuckDuckGo title often has format "Title - Artist" or just "Title"
                             if " - " in title:
                                 parts = title.split(" - ", 1)
                                 if len(parts) == 2:
                                     result_title = parts[0].strip()
                                     artist = parts[1].strip()
+                            elif title:
+                                # If title exists but no " - ", use it as the track title
+                                result_title = title.strip()
                             
                             # Calculate match score
                             match_query = f'"{track.artist}" "{track.title}"'
@@ -334,6 +355,13 @@ class AmazonMusicSearcher:
                             if not is_artist_page:
                                 match_score += 20  # Prefer tracks/albums
                             
+                            # Use DuckDuckGo title as page_title if available, otherwise construct from parsed data
+                            page_title = title if title else None
+                            if not page_title and result_title and artist:
+                                page_title = f"{result_title} - {artist}"
+                            elif not page_title and result_title:
+                                page_title = result_title
+                            
                             all_results.append(
                                 AmazonSearchResult(
                                     title=result_title,
@@ -341,6 +369,7 @@ class AmazonMusicSearcher:
                                     url=url,
                                     price=price,
                                     match_score=match_score,
+                                    page_title=page_title,  # Use DuckDuckGo title directly
                                 )
                             )
                     except Exception:
@@ -348,16 +377,20 @@ class AmazonMusicSearcher:
                 
                 # Sort by match score (highest first)
                 all_results.sort(key=lambda x: x.match_score, reverse=True)
+                top_results = all_results[:5]  # Return top 5 results
                 
-                # Filter out artist pages if we have track/album results
-                track_album_results = [r for r in all_results if "/artists/" not in r.url.lower()]
-                if track_album_results:
-                    return track_album_results[:5]  # Return top 5 track/album results
+                # Construct page titles from search result data (Amazon HTML doesn't have titles)
+                # Format: "Title - Artist" or just "Title" or "Artist"
+                for result in top_results:
+                    if not result.page_title:
+                        if result.title and result.artist:
+                            result.page_title = f"{result.title} - {result.artist}"
+                        elif result.title:
+                            result.page_title = result.title
+                        elif result.artist:
+                            result.page_title = result.artist
                 
-                # If no track/album results, return artist pages as fallback
-                artist_results = [r for r in all_results if "/artists/" in r.url.lower()]
-                if artist_results:
-                    return artist_results[:3]  # Return top 3 artist pages
+                return top_results
                 
         except Exception as e:
             print(f"Warning: DuckDuckGo search failed: {e}")
@@ -365,7 +398,31 @@ class AmazonMusicSearcher:
             query = self._build_search_query(track)
             return self._search_amazon(query)
         
-        return all_results[:5]
+        return []
+    
+    def _fetch_page_title(self, url: str) -> str | None:
+        """Fetch HTML title from Amazon page.
+        
+        Args:
+            url: Amazon URL to fetch title from
+            
+        Returns:
+            Page title or None if fetch fails
+        """
+        try:
+            response = self.session.get(url, timeout=10)
+            response.raise_for_status()
+            
+            soup = BeautifulSoup(response.text, "html.parser")
+            title_tag = soup.find("title")
+            if title_tag:
+                title_text = title_tag.get_text(strip=True)
+                # Clean up Amazon title (remove "Amazon Music:" prefix if present)
+                title_text = re.sub(r"^Amazon Music:\s*", "", title_text, flags=re.IGNORECASE)
+                return title_text
+        except Exception as e:
+            logger.debug(f"Failed to fetch page title for {url}: {e}")
+            return None
 
     def generate_amazon_link(self, track: Track) -> str:
         """Generate Amazon Music search URL for a track.
