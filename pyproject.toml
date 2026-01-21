@@ -13,6 +13,9 @@ dependencies = [
     "ddgs>=1.0.0",
 ]
 
+[project.scripts]
+mm = "src.mm:main"
+
 [project.optional-dependencies]
 dev = [
     "ruff>=0.1.0",

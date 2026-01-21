@@ -88,7 +88,7 @@ def remove_junk_tokens(text: str) -> str:
 
 
 def remove_label_tokens(text: str) -> str:
-    """Remove catalog codes like KR006, [A-Z]{2,}\d+.
+    r"""Remove catalog codes like KR006, [A-Z]{2,}\d+.
 
     Args:
         text: Input text

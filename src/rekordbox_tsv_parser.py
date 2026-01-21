@@ -178,9 +178,10 @@ class RekordboxTSVParser:
                 return None
 
             # Extract columns
+            # Column mapping: 0=#, 1=DJ Play Count, 2=Rating, 3=BPM, 4=Key, 5=Time, 6=Color, 7=Track Title, 8=Artist, ...
             bpm_str = columns[3].strip() if len(columns) > 3 else ""
-            key = columns[5].strip() if len(columns) > 5 else ""
-            time_str = columns[6].strip() if len(columns) > 6 else ""
+            key = columns[4].strip() if len(columns) > 4 else ""  # Key is at index 4
+            time_str = columns[5].strip() if len(columns) > 5 else ""  # Time is at index 5
             title = columns[7].strip() if len(columns) > 7 else ""
             artist = columns[8].strip() if len(columns) > 8 else ""
             genre = columns[12].strip() if len(columns) > 12 else ""

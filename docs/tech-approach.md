@@ -282,6 +282,9 @@ mm fetch-missing-amazon-links
 # List missing tracks
 mm tracks list --missing
 
+# Search tracks (matches across artist and title)
+mm tracks list --search "octave untold"
+
 # List with filters
 mm tracks list --playlist "Koko Groove" --missing
 mm tracks list --artist "Octave One"
@@ -297,6 +300,7 @@ mm tracks list --missing --count
 ```
 
 **Filter Options:**
+- `--search <query>`: Search across artist and title fields (fuzzy match, space-separated tokens)
 - `--missing`: `downloaded=false AND in_rekordbox=false`
 - `--in-rekordbox`: `in_rekordbox=true`
 - `--downloaded`: `downloaded=true`
@@ -351,6 +355,12 @@ mm fetch-missing-amazon-links
 ### List missing tracks
 ```bash
 mm tracks list --missing
+```
+
+### Search tracks
+```bash
+mm tracks list --search "octave untold"
+mm tracks list --search "yuksek" --missing
 ```
 
 ### List tracks with filters and custom output
