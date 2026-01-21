@@ -50,7 +50,7 @@ class RekordboxTSVTrack:
         self.full_title = normalize_text(self.title)
         self.base_title = create_base_title(self.title)
         self.artist_tokens = extract_artist_tokens(self.artist)
-        self.all_tokens = create_all_tokens(self.title, self.artist)
+        self.all_tokens = create_all_tokens(self.title, self.artist, self.album)
 
         # Generate ID (use file_path if available, otherwise hash title+artist)
         if self.file_path:

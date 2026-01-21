@@ -16,6 +16,7 @@ from rapidfuzz import fuzz
 from .library_db import LibraryDB, LibraryTrack
 from .rekordbox_index import RekordboxIndex
 from .rekordbox_tsv_parser import RekordboxTSVParser
+from .spotify_client import SpotifyPlaylistExtractor
 from .track_normalizer import (
     create_all_tokens,
     create_base_title,
@@ -349,7 +350,7 @@ def import_rekordbox(
             continue
 
         # Generate tokens from LibraryTrack
-        library_tokens = create_all_tokens(library_track.title, library_track.artist)
+        library_tokens = create_all_tokens(library_track.title, library_track.artist, library_track.album)
 
         # Get candidates from index
         candidate_ids = index.get_candidates(library_tokens, max_candidates=20)
@@ -440,6 +441,187 @@ def import_rekordbox(
     logger.info("=" * 60)
 
 
+def match_spotify(
+    csv_path: Path,
+    db_path: Path = Path("music.db"),
+    rekordbox_tsv_path: Path | None = None,
+    limit: int = 20,
+) -> None:
+    """Match Spotify playlist tracks against Rekordbox collection.
+
+    Args:
+        csv_path: Path to Spotify playlist CSV file
+        db_path: Path to SQLite database
+        rekordbox_tsv_path: Optional path to Rekordbox TSV file (if not in DB)
+    """
+    logger.info(f"Parsing Spotify playlist: {csv_path}")
+    extractor = SpotifyPlaylistExtractor()
+    spotify_tracks = extractor.parse_csv(csv_path)
+    logger.info(f"Parsed {len(spotify_tracks)} Spotify tracks")
+
+    # Load Rekordbox tracks from database (where rekordbox_file_path IS NOT NULL)
+    db = LibraryDB(db_path)
+    rekordbox_library_tracks = [
+        track for track in db.get_all_tracks() if track.rekordbox_file_path
+    ]
+    logger.info(f"Found {len(rekordbox_library_tracks)} Rekordbox tracks in database")
+
+    # If no Rekordbox tracks in DB, try to load from TSV
+    if not rekordbox_library_tracks and rekordbox_tsv_path:
+        logger.info(f"Loading Rekordbox tracks from TSV: {rekordbox_tsv_path}")
+        rb_parser = RekordboxTSVParser()
+        rekordbox_tsv_tracks = rb_parser.parse_tsv(rekordbox_tsv_path)
+        logger.info(f"Parsed {len(rekordbox_tsv_tracks)} Rekordbox tracks from TSV")
+
+        # Build index from TSV tracks
+        logger.info("Building inverted index from TSV...")
+        index = RekordboxIndex(rekordbox_tsv_tracks)
+        index.build_index(rekordbox_tsv_tracks)
+    else:
+        # Build index from LibraryTracks
+        logger.info("Building inverted index from database...")
+        # Convert LibraryTracks to RekordboxTSVTrack-like objects for indexing
+        rb_parser = RekordboxTSVParser()
+        rekordbox_tsv_tracks = []
+        for lib_track in rekordbox_library_tracks:
+            # Create a RekordboxTSVTrack-like object from LibraryTrack
+            from .rekordbox_tsv_parser import RekordboxTSVTrack
+            rb_track = RekordboxTSVTrack(
+                title=lib_track.title,
+                artist=lib_track.artist,
+                album=lib_track.album,
+                genre=lib_track.rekordbox_genre,
+                bpm=lib_track.rekordbox_bpm,
+                key=lib_track.rekordbox_key,
+                duration_ms=lib_track.duration_ms,
+                file_path=lib_track.rekordbox_file_path or "",
+            )
+            rekordbox_tsv_tracks.append(rb_track)
+
+        index = RekordboxIndex(rekordbox_tsv_tracks)
+        index.build_index(rekordbox_tsv_tracks)
+
+    logger.info(f"Index built: {len(index.tracks)} tracks, {len(index.token_index)} tokens")
+
+    # Match each Spotify track (limit to first N tracks)
+    results: list[tuple[int, object, list[tuple[LibraryTrack, float]]]] = []
+    total_tracks = len(spotify_tracks)
+    tracks_to_process = spotify_tracks[:limit] if limit > 0 else spotify_tracks
+
+    for idx, spotify_track in enumerate(tracks_to_process, start=1):
+        # Generate tokens from Spotify track (title + artist + album)
+        spotify_tokens = create_all_tokens(
+            spotify_track.title, spotify_track.artist, spotify_track.album
+        )
+
+        # Get candidates from index
+        candidate_ids = index.get_candidates(spotify_tokens, max_candidates=50)
+
+        if not candidate_ids:
+            # No matches found
+            results.append((idx, spotify_track, []))
+            continue
+
+        # Score each candidate
+        matches: list[tuple[LibraryTrack, float]] = []
+
+        for rb_track_id in candidate_ids:
+            rb_track = index.get_track(rb_track_id)
+            if rb_track is None:
+                continue
+
+            # Find corresponding LibraryTrack in database
+            lib_track = None
+            for lt in rekordbox_library_tracks:
+                if lt.rekordbox_file_path == rb_track.file_path:
+                    lib_track = lt
+                    break
+
+            # If not in DB, create a temporary LibraryTrack from RekordboxTSVTrack
+            if lib_track is None:
+                lib_track = LibraryTrack(
+                    title=rb_track.title,
+                    artist=rb_track.artist,
+                    album=rb_track.album,
+                    duration_ms=rb_track.duration_ms,
+                    in_rekordbox=True,
+                    rekordbox_file_path=rb_track.file_path,
+                    rekordbox_bpm=rb_track.bpm,
+                    rekordbox_genre=rb_track.genre,
+                    rekordbox_key=rb_track.key,
+                )
+
+            # Create a temporary LibraryTrack from Spotify track for matching
+            spotify_lib_track = LibraryTrack(
+                title=spotify_track.title,
+                artist=spotify_track.artist,
+                album=spotify_track.album,
+                duration_ms=spotify_track.duration_ms,
+            )
+
+            # Calculate match score (returns 0.0-1.0, convert to 0-100)
+            # Note: calculate_match_score expects (library_track, rekordbox_track)
+            # We're matching Spotify track (as LibraryTrack) against Rekordbox track
+            score_0_1 = calculate_match_score(
+                spotify_lib_track, rb_track, duration_hint=True
+            )
+            score_0_100 = score_0_1 * 100.0
+
+            matches.append((lib_track, score_0_100))
+
+        # Sort by score descending
+        matches.sort(key=lambda x: x[1], reverse=True)
+
+        # Keep top matches
+        results.append((idx, spotify_track, matches))
+
+    # Display results
+    print()
+    if total_tracks > limit:
+        logger.info(f"Processing {len(tracks_to_process)} of {total_tracks} tracks (limit: {limit})")
+    else:
+        logger.info(f"Processing {total_tracks} tracks")
+    print()
+    print(f"{'#':<4} {'Spotify Title':<40} {'Spotify Artist':<30} {'Score':<8} {'≥90':<5} {'Match Title':<40} {'Match Artist':<30} {'Filename':<50} {'Status':<6}")
+    print("-" * 220)
+
+    for track_num, spotify_track, matches in results:
+        title_display = spotify_track.title[:38] + ".." if len(spotify_track.title) > 40 else spotify_track.title
+        artist_display = spotify_track.artist[:28] + ".." if len(spotify_track.artist) > 30 else spotify_track.artist
+
+        if not matches:
+            # No matches
+            print(f"{track_num:<4} {title_display:<40} {artist_display:<30} {'0.0':<8} {'0':<5} {'No match':<40} {'':<30} {'':<50} {'❌':<6}")
+        else:
+            # Count matches ≥90
+            matches_90_plus = sum(1 for _, score in matches if score >= 90.0)
+            best_match, best_score = matches[0]
+
+            best_title = best_match.title[:38] + ".." if len(best_match.title) > 40 else best_match.title
+            best_artist = best_match.artist[:28] + ".." if len(best_match.artist) > 30 else best_match.artist
+            filename = best_match.rekordbox_file_path or ""
+            if len(filename) > 48:
+                filename = "..." + filename[-45:]
+
+            status = "✅" if best_score >= 90.0 else "❌"
+
+            print(f"{track_num:<4} {title_display:<40} {artist_display:<30} {best_score:>6.1f}  {matches_90_plus:<5} {best_title:<40} {best_artist:<30} {filename:<50} {status:<6}")
+
+            # Show second match if available and different from first
+            if len(matches) > 1:
+                second_match, second_score = matches[1]
+                second_title = second_match.title[:38] + ".." if len(second_match.title) > 40 else second_match.title
+                second_artist = second_match.artist[:28] + ".." if len(second_match.artist) > 30 else second_match.artist
+                second_filename = second_match.rekordbox_file_path or ""
+                if len(second_filename) > 48:
+                    second_filename = "..." + second_filename[-45:]
+                second_status = "✅" if second_score >= 90.0 else "❌"
+                print(f"{'':<4} {'':<40} {'':<30} {second_score:>6.1f}  {'':<5} {second_title:<40} {second_artist:<30} {second_filename:<50} {second_status:<6}")
+
+    print()
+    db.close()
+
+
 def main() -> None:
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -482,6 +664,34 @@ def main() -> None:
         type=int,
         default=20,
         help="Maximum number of results to return (default: 20)",
+    )
+
+    # match-spotify command
+    match_parser = subparsers.add_parser(
+        "match-spotify",
+        help="Match Spotify playlist tracks against Rekordbox collection",
+    )
+    match_parser.add_argument(
+        "csv_file",
+        type=Path,
+        help="Path to Spotify playlist CSV file",
+    )
+    match_parser.add_argument(
+        "--db",
+        type=Path,
+        default=Path("music.db"),
+        help="Path to SQLite database (default: music.db)",
+    )
+    match_parser.add_argument(
+        "--rekordbox-tsv",
+        type=Path,
+        help="Optional path to Rekordbox TSV file (if Rekordbox tracks not in DB)",
+    )
+    match_parser.add_argument(
+        "--limit",
+        type=int,
+        default=20,
+        help="Maximum number of Spotify tracks to process (default: 20)",
     )
 
     # import-rekordbox command
@@ -530,6 +740,17 @@ def main() -> None:
         else:
             tracks_parser.print_help()
             sys.exit(1)
+    elif args.command == "match-spotify":
+        if not args.csv_file.exists():
+            logger.error(f"CSV file not found: {args.csv_file}")
+            sys.exit(1)
+
+        match_spotify(
+            csv_path=args.csv_file,
+            db_path=args.db,
+            rekordbox_tsv_path=args.rekordbox_tsv,
+            limit=args.limit,
+        )
     elif args.command == "import-rekordbox":
         if not args.tsv_file.exists():
             logger.error(f"TSV file not found: {args.tsv_file}")

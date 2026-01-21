@@ -5,7 +5,7 @@ for fuzzy matching and indexing.
 """
 
 import re
-from typing import Any
+from typing import Any, Optional
 
 
 def normalize_text(text: str) -> str:
@@ -63,7 +63,11 @@ def standardize_separators(text: str) -> str:
 
 
 def remove_junk_tokens(text: str) -> str:
-    """Remove common junk tokens from titles.
+    """Remove common junk tokens from titles that are not identifiers.
+
+    Junk tokens are metadata/service words like "beatport", "spotify", "downloaded"
+    that don't help identify the track. Mix/remix/edit/version and catalog codes
+    are kept as they are identifiers.
 
     Args:
         text: Input text
@@ -74,13 +78,16 @@ def remove_junk_tokens(text: str) -> str:
     if not text:
         return ""
     junk_patterns = [
-        r"\boriginal mix\b",
-        r"\bextended\b",
-        r"\bradio edit\b",
-        r"\bedit\b",
-        r"\bmix\b",
-        r"\bremix\b",
-        r"\bversion\b",
+        r"\bbeatport\b",
+        r"\bspotify\b",
+        r"\bdownloaded\b",
+        r"\bdownload\b",
+        r"\bimported\b",
+        r"\bimport\b",
+        r"\bfrom\b",
+        r"\bthe\b",  # Common article, not an identifier
+        r"\ba\b",  # Common article
+        r"\ban\b",  # Common article
     ]
     for pattern in junk_patterns:
         text = re.sub(pattern, "", text, flags=re.IGNORECASE)
@@ -88,18 +95,20 @@ def remove_junk_tokens(text: str) -> str:
 
 
 def remove_label_tokens(text: str) -> str:
-    r"""Remove catalog codes like KR006, [A-Z]{2,}\d+.
+    """Label tokens are now kept as identifiers - this function is deprecated.
+    
+    Catalog codes like KR006 are identifiers, not junk.
+    This function now just returns normalized text for backward compatibility.
 
     Args:
         text: Input text
 
     Returns:
-        Text with label tokens removed
+        Normalized text (no tokens removed)
     """
     if not text:
         return ""
-    # Remove catalog codes (2+ uppercase letters followed by digits)
-    text = re.sub(r"\b[A-Z]{2,}\d+\b", "", text)
+    # Keep catalog codes - they're identifiers
     return normalize_text(text)
 
 
@@ -123,30 +132,35 @@ def extract_artist_tokens(artist: str) -> list[str]:
 
 
 def create_base_title(title: str) -> str:
-    """Apply all normalization + remove junk/label tokens.
+    """Apply normalization + remove only actual junk tokens.
+
+    Keeps mix/remix/edit/version and catalog codes as they are identifiers.
+    Only removes service/metadata words like "beatport", "spotify", "downloaded".
 
     Args:
         title: Track title
 
     Returns:
-        Base title with junk and label tokens removed
+        Base title with only junk tokens removed (identifiers preserved)
     """
     if not title:
         return ""
-    # Apply all normalization steps
+    # Apply normalization steps
     text = standardize_feat_tokens(title)
     text = standardize_separators(text)
-    text = remove_junk_tokens(text)
-    text = remove_label_tokens(text)
+    text = remove_junk_tokens(text)  # Only removes actual junk, not identifiers
+    # Note: remove_label_tokens is now a no-op (catalog codes are identifiers)
+    text = remove_label_tokens(text)  # Still called for backward compatibility
     return text
 
 
-def create_all_tokens(title: str, artist: str) -> list[str]:
-    """Combine base_title tokens + artist_tokens.
+def create_all_tokens(title: str, artist: str, album: Optional[str] = None) -> list[str]:
+    """Combine base_title tokens + artist_tokens + album_tokens.
 
     Args:
         title: Track title
         artist: Artist name
+        album: Album name (optional)
 
     Returns:
         Combined list of normalized tokens
@@ -157,6 +171,13 @@ def create_all_tokens(title: str, artist: str) -> list[str]:
     # Split base_title into tokens
     title_tokens = [token for token in base_title.split() if token]
 
+    # Add album tokens if provided
+    album_tokens: list[str] = []
+    if album:
+        # Normalize album (remove junk but keep mix/remix/edit/version and catalog codes)
+        album_normalized = create_base_title(album)
+        album_tokens = [token for token in album_normalized.split() if token]
+
     # Combine and deduplicate
-    all_tokens = list(set(title_tokens + artist_tokens))
+    all_tokens = list(set(title_tokens + artist_tokens + album_tokens))
     return all_tokens
