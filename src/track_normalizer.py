@@ -56,9 +56,10 @@ def standardize_separators(text: str) -> str:
     """
     if not text:
         return ""
-    # Replace & and , with "and"
+    # Replace &, , and ; with "and"
     text = re.sub(r"\s*&\s*", " and ", text)
     text = re.sub(r"\s*,\s*", " and ", text)
+    text = re.sub(r"\s*;\s*", " and ", text)
     return text
 
 

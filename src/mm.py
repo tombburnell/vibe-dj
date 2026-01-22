@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,7 @@ from .library_db import LibraryDB, LibraryTrack
 from .rekordbox_index import RekordboxIndex
 from .rekordbox_tsv_parser import RekordboxTSVParser
 from .spotify_client import SpotifyPlaylistExtractor
+from .track_matching import calculate_match_score
 from .track_normalizer import (
     create_all_tokens,
     create_base_title,
@@ -247,67 +249,330 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def calculate_match_score(
-    library_track: LibraryTrack, rekordbox_track, duration_hint: bool = True
-) -> float:
-    """Calculate match score between LibraryTrack and RekordboxTSVTrack.
-
+def extract_artist_title_from_filename(filename: str) -> tuple[str | None, str]:
+    """Extract artist and title from filename using common patterns.
+    
+    Common patterns:
+    - "Artist - Title.mp3"
+    - "Artist -- Title.mp3"
+    - "Title - Artist.mp3" (less common)
+    - "Artist/Title.mp3"
+    - Just "Title.mp3" (no artist)
+    
     Args:
-        library_track: LibraryTrack from database
-        rekordbox_track: RekordboxTSVTrack from TSV
-        duration_hint: Whether to use duration as a hint (default: True)
-
+        filename: Full path or just filename
+        
     Returns:
-        Confidence score 0.0-1.0
+        Tuple of (artist, title) where artist may be None
     """
-    # Normalize LibraryTrack fields using track_normalizer for consistency
-    library_title_normalized = normalize_text(library_track.title)
-    library_title_base = create_base_title(library_track.title)
-    library_artist_normalized = normalize_text(library_track.artist)
+    # Extract just the filename without path
+    path = Path(filename)
+    stem = path.stem  # Filename without extension
+    
+    # Pattern 1: "Artist - Title" or "Artist -- Title"
+    if " - " in stem:
+        parts = stem.split(" - ", 1)
+        if len(parts) == 2:
+            return (parts[0].strip(), parts[1].strip())
+    elif " -- " in stem:
+        parts = stem.split(" -- ", 1)
+        if len(parts) == 2:
+            return (parts[0].strip(), parts[1].strip())
+    
+    # Pattern 2: "Artist/Title" (path separator)
+    if "/" in stem:
+        parts = stem.rsplit("/", 1)
+        if len(parts) == 2:
+            return (parts[0].strip(), parts[1].strip())
+    
+    # Pattern 3: Just title (no artist)
+    return (None, stem.strip())
 
-    # Title similarity (normalized titles)
-    title_score = fuzz.token_sort_ratio(
-        library_title_normalized, rekordbox_track.full_title
-    ) / 100.0
 
-    # Artist similarity (compare with all artist tokens)
-    artist_scores = []
-    for rb_artist_token in rekordbox_track.artist_tokens:
-        score = fuzz.ratio(library_artist_normalized, rb_artist_token) / 100.0
-        artist_scores.append(score)
-    artist_score = max(artist_scores) if artist_scores else 0.0
+def mark_downloaded(
+    file_list_path: Path,
+    db_path: Path = Path("music.db"),
+    threshold: float = 85.0,
+) -> None:
+    """Mark tracks as downloaded based on a file list.
+    
+    Reads a text file with one filename per line, extracts artist/title from
+    filenames, matches against tracks in DB (where downloaded=False and 
+    rekordbox_file_path IS NULL), and updates matched tracks.
+    
+    Args:
+        file_list_path: Path to text file with one filename per line
+        db_path: Path to SQLite database
+        threshold: Minimum match score (0-100, default: 85.0)
+    """
+    if not file_list_path.exists():
+        logger.error(f"File list not found: {file_list_path}")
+        sys.exit(1)
+    
+    # Read file list
+    with file_list_path.open("r", encoding="utf-8") as f:
+        filenames = [line.strip() for line in f if line.strip()]
+    
+    if not filenames:
+        logger.warning("File list is empty")
+        return
+    
+    logger.info(f"Processing {len(filenames)} files from {file_list_path}")
+    
+    # Open database
+    db = LibraryDB(db_path)
+    
+    # Get eligible tracks (not downloaded, no rekordbox path)
+    eligible_tracks = db.get_undownloaded_tracks_without_rekordbox()
+    logger.info(f"Found {len(eligible_tracks)} eligible tracks in database")
+    
+    if not eligible_tracks:
+        logger.warning("No eligible tracks found in database")
+        db.close()
+        return
+    
+    # Build normalized search strings for eligible tracks
+    eligible_track_data: list[tuple[LibraryTrack, str]] = []
+    for track in eligible_tracks:
+        # Use same normalization as find_track
+        search_string = f"{track.normalize_artist()} {track.normalize_title()}"
+        eligible_track_data.append((track, search_string))
+    
+    matched_count = 0
+    unmatched_files: list[str] = []
+    
+    # Process each filename
+    for filename in filenames:
+        artist, title = extract_artist_title_from_filename(filename)
+        
+        if not title:
+            logger.warning(f"Could not extract title from: {filename}")
+            unmatched_files.append(filename)
+            continue
+        
+        # Build search string from filename
+        if artist:
+            file_search = f"{artist.strip().lower()} {title.strip().lower()}"
+        else:
+            file_search = title.strip().lower()
+        
+        # Find best match
+        best_match: LibraryTrack | None = None
+        best_score = 0.0
+        
+        for db_track, db_search_string in eligible_track_data:
+            score = fuzz.token_sort_ratio(file_search, db_search_string)
+            
+            # If no artist in filename, also try title-only match (weighted lower)
+            if not artist:
+                title_score = fuzz.token_sort_ratio(
+                    title.strip().lower(),
+                    db_track.normalize_title(),
+                )
+                score = max(score, title_score * 0.8)  # Weight title-only matches lower
+            
+            if score > best_score and score >= threshold:
+                best_score = score
+                best_match = db_track
+        
+        if best_match:
+            # Update track
+            download_date = datetime.now(timezone.utc).isoformat()
+            db.update_track(
+                best_match.id,
+                {
+                    "downloaded": True,
+                    "download_path": filename,
+                    "download_date": download_date,
+                },
+            )
+            matched_count += 1
+            logger.info(
+                f"✓ Matched: {filename} → {best_match.artist} - {best_match.title} (score: {best_score:.1f})"
+            )
+        else:
+            unmatched_files.append(filename)
+            logger.debug(f"✗ No match for: {filename} (best score: {best_score:.1f})")
+    
+    # Commit changes
+    db.commit()
+    db.close()
+    
+    # Summary
+    print(f"\n{'='*60}")
+    print(f"Summary:")
+    print(f"  Total files processed: {len(filenames)}")
+    print(f"  Matched and marked as downloaded: {matched_count}")
+    print(f"  Unmatched files: {len(unmatched_files)}")
+    print(f"{'='*60}")
+    
+    # Log unmatched files
+    if unmatched_files:
+        logger.info("Unmatched files:")
+        for filename in unmatched_files:
+            logger.info(f"  - {filename}")
 
-    # Swap score (handle metadata swaps - artist in title, title in artist)
-    swap_title_score = fuzz.token_sort_ratio(
-        library_title_normalized, " ".join(rekordbox_track.artist_tokens)
-    ) / 100.0
-    swap_artist_score = fuzz.ratio(
-        library_artist_normalized, rekordbox_track.base_title
-    ) / 100.0
-    swap_score = max(swap_title_score, swap_artist_score)
 
-    # Use best of normal vs swapped
-    title_final = max(title_score, swap_score)
-    artist_final = max(artist_score, swap_score)
+def print_match_debug(
+    spotify_track,
+    spotify_tokens: list[str],
+    candidate_ids: list[str],
+    matches: list[tuple[LibraryTrack, float]],
+    index: RekordboxIndex,
+    rekordbox_tsv_tracks: list,
+) -> None:
+    """Print detailed debug information for a single track match."""
+    print("\n" + "="*80)
+    print(f"DEBUG: Matching Spotify Track")
+    print("="*80)
+    print(f"Spotify ID: {spotify_track.spotify_id or 'N/A'}")
+    print(f"Title: {spotify_track.title}")
+    print(f"Artist: {spotify_track.artist}")
+    if spotify_track.album:
+        print(f"Album: {spotify_track.album}")
+    if spotify_track.duration_ms:
+        duration_sec = spotify_track.duration_ms // 1000
+        print(f"Duration: {duration_sec // 60}:{duration_sec % 60:02d}")
+    
+    print(f"\nSpotify Tokens ({len(spotify_tokens)}): {', '.join(spotify_tokens)}")
+    
+    # Show candidate generation
+    print(f"\nCandidate Generation:")
+    print(f"  Found {len(candidate_ids)} candidates from index")
+    if candidate_ids:
+        # Show token overlap for top candidates
+        candidate_overlaps: dict[str, int] = {}
+        for token in spotify_tokens:
+            if token in index.token_index:
+                for rb_id in index.token_index[token]:
+                    if rb_id in candidate_ids[:10]:  # Top 10 only
+                        candidate_overlaps[rb_id] = candidate_overlaps.get(rb_id, 0) + 1
+        
+        print(f"  Top candidate token overlaps:")
+        for rb_id, overlap in sorted(candidate_overlaps.items(), key=lambda x: x[1], reverse=True)[:5]:
+            rb_track = index.get_track(rb_id)
+            if rb_track:
+                print(f"    {overlap} tokens: {rb_track.title[:50]} - {rb_track.artist[:30]}")
+    
+    print(f"\nMatch Results ({len(matches)} candidates scored):")
+    print("-"*80)
+    
+    for rank, (lib_track, score) in enumerate(matches[:10], 1):  # Show top 10
+        # Find corresponding RekordboxTSVTrack
+        rb_track = None
+        for rt in rekordbox_tsv_tracks:
+            if rt.file_path == lib_track.rekordbox_file_path:
+                rb_track = rt
+                break
+        
+        if not rb_track:
+            continue
+        
+        # Create temporary LibraryTrack for scoring
+        spotify_lib_track = LibraryTrack(
+            title=spotify_track.title,
+            artist=spotify_track.artist,
+            album=spotify_track.album,
+            duration_ms=spotify_track.duration_ms,
+        )
+        
+        # Get debug info
+        score_0_1, debug = calculate_match_score(
+            spotify_lib_track, rb_track, return_debug=True
+        )
+        
+        print(f"\n#{rank} Score: {score:.1f} (confidence: {score_0_1:.3f})")
+        print(f"  Rekordbox: {rb_track.title} - {rb_track.artist}")
+        print(f"  File: {rb_track.file_path}")
+        
+        title_debug = debug["title_debug"]
+        print(f"\n  Title Matching:")
+        print(f"    Spotify base title: '{title_debug['title_a_base']}'")
+        print(f"    Rekordbox base title: '{title_debug['title_b_base']}'")
+        print(f"    Title tokens (Spotify): {title_debug['tokens_a']}")
+        print(f"    Title tokens (Rekordbox): {title_debug['tokens_b']}")
+        if title_debug["removed_tokens_a"] or title_debug["removed_tokens_b"]:
+            print(
+                f"    Removed tokens (Spotify): {title_debug['removed_tokens_a']}"
+            )
+            print(
+                f"    Removed tokens (Rekordbox): {title_debug['removed_tokens_b']}"
+            )
+        print(f"    Title coverage: {title_debug['coverage']:.3f}")
+        print(f"    Title quality: {title_debug['quality']:.3f}")
+        print(f"    Title order score: {title_debug['order_score']:.3f}")
+        print("    Title token scores:")
+        for detail in title_debug["details"]:
+            best = detail.best_match or "—"
+            print(
+                f"      '{detail.token}': {detail.score:.3f} (→ {best}), weight={detail.weight:.3f}"
+            )
+        
+        artist_debug = debug["artist_debug"]
+        print(f"\n  Artist Matching:")
+        print(f"    Primary artist tokens: {artist_debug['primary_tokens']}")
+        print(f"    Extra artist tokens: {artist_debug['extra_tokens']}")
+        print(f"    Rekordbox artist tokens: {artist_debug['rekordbox_tokens']}")
+        print(f"    Primary coverage: {artist_debug['primary_coverage']:.3f}")
+        print(f"    Primary quality: {artist_debug['primary_quality']:.3f}")
+        print("    Primary token scores:")
+        for detail in artist_debug["primary_details"]:
+            best = detail.best_match or "—"
+            print(
+                f"      '{detail.token}': {detail.score:.3f} (→ {best}), weight={detail.weight:.3f}"
+            )
+        print(f"    Extra coverage: {artist_debug['extra_coverage']:.3f}")
+        print(f"    Extra quality: {artist_debug['extra_quality']:.3f}")
+        print("    Extra token scores:")
+        for detail in artist_debug["extra_details"]:
+            best = detail.best_match or "—"
+            print(
+                f"      '{detail.token}': {detail.score:.3f} (→ {best}), weight={detail.weight:.3f}"
+            )
+        
+        duration_debug = debug["duration_debug"]
+        lib_ms = spotify_lib_track.duration_ms
+        rb_ms = rb_track.duration_ms
+        lib_dur = f"{lib_ms // 60000}:{(lib_ms // 1000) % 60:02d}" if lib_ms else "N/A"
+        rb_dur = f"{rb_ms // 60000}:{(rb_ms // 1000) % 60:02d}" if rb_ms else "N/A"
+        diff_ratio = duration_debug["diff_ratio"]
+        diff_pct = f"{diff_ratio * 100:.1f}%" if diff_ratio is not None else "N/A"
 
-    # Combined text similarity (weighted)
-    text_score = (title_final * 0.7) + (artist_final * 0.25)
-
-    # Duration hint (if both have duration)
-    duration_boost = 0.0
-    if duration_hint and library_track.duration_ms and rekordbox_track.duration_ms:
-        duration_diff = abs(library_track.duration_ms - rekordbox_track.duration_ms)
-        if duration_diff < 10000:  # < 10 seconds
-            duration_boost = 0.05
-        elif duration_diff < 30000:  # < 30 seconds
-            duration_boost = 0.02
-        elif duration_diff > 90000:  # > 90 seconds
-            duration_boost = -0.05
-
-    # Final score
-    confidence = min(1.0, max(0.0, text_score + duration_boost))
-
-    return confidence
+        print(f"\n  Score Calculation:")
+        print(
+            f"    Text score: {debug['text_score']:.3f} (title: {debug['title_score']:.3f}, artist: {debug['artist_score']:.3f})"
+        )
+        variation_debug = debug["variation_debug"]
+        print(
+            f"    Variation tokens (Spotify): {variation_debug['tokens_a']}"
+        )
+        print(
+            f"    Variation tokens (Rekordbox): {variation_debug['tokens_b']}"
+        )
+        print(
+            f"    Variation overlap: {variation_debug['overlap']} (match: {variation_debug['match']:.3f})"
+        )
+        missing_debug = debug["missing_debug"]
+        print(
+            f"    Missing tokens (Spotify): {missing_debug['missing_a']}"
+        )
+        print(
+            f"    Missing tokens (Rekordbox): {missing_debug['missing_b']}"
+        )
+        print(
+            f"    Missing ratio: {missing_debug['missing_ratio']:.3f}"
+        )
+        print(
+            f"    Duration: Spotify {lib_dur} vs Rekordbox {rb_dur} (diff {diff_pct})"
+        )
+        print(f"    Duration score: {debug['duration_score']:.3f}")
+        print(f"    Variation penalty: {debug['variation_penalty']:.3f}")
+        print(f"    Missing penalty: {debug['missing_penalty']:.3f}")
+        print(f"    Final score: {debug['final_score']:.3f}")
+        
+        print("-"*80)
+    
+    print("\n" + "="*80)
 
 
 def import_rekordbox(
@@ -451,9 +716,14 @@ def match_spotify(
     db_path: Path = Path("music.db"),
     rekordbox_tsv_path: Path | None = None,
     limit: int = 20,
+    top_matches: int = 1,
+    match_threshold: float = 90.0,
     exclude_matching: bool = False,
     with_amazon_links: bool = False,
+    with_lucida_links: bool = False,
     sort_by_url_score: bool = False,
+    sort_by_score: bool = False,
+    spotify_id: str | None = None,
 ) -> None:
     """Match Spotify playlist tracks against Rekordbox collection.
 
@@ -462,14 +732,27 @@ def match_spotify(
         db_path: Path to SQLite database
         rekordbox_tsv_path: Optional path to Rekordbox TSV file (if not in DB)
         limit: Maximum number of Spotify tracks to process (default: 20)
-        exclude_matching: Exclude tracks with matches ≥90 (default: False)
+        top_matches: Number of matches to display per track (default: 1)
+        match_threshold: Score threshold for exclude-matching and display (default: 90.0)
+        exclude_matching: Exclude tracks that have matches at or above match_threshold (default: False)
         with_amazon_links: Fetch Amazon Music links with caching (default: False)
+        with_lucida_links: Show Lucida download links (cache only, no searches) (default: False)
         sort_by_url_score: Sort results by URL score (highest first) when using --with-amazon-links (default: False)
+        sort_by_score: Sort results by match score (highest first) when not using link mode (default: False)
     """
     logger.info(f"Parsing Spotify playlist: {csv_path}")
     extractor = SpotifyPlaylistExtractor()
     spotify_tracks = extractor.parse_csv(csv_path)
     logger.info(f"Parsed {len(spotify_tracks)} Spotify tracks")
+    
+    # Filter to specific track if spotify_id provided
+    if spotify_id:
+        spotify_tracks = [t for t in spotify_tracks if t.spotify_id == spotify_id]
+        if not spotify_tracks:
+            logger.error(f"No track found with Spotify ID: {spotify_id}")
+            sys.exit(1)
+        logger.info(f"Debug mode: Matching single track with Spotify ID: {spotify_id}")
+        limit = 1  # Override limit for debug mode
 
     # Load Rekordbox tracks from database (where rekordbox_file_path IS NOT NULL)
     db = LibraryDB(db_path)
@@ -515,7 +798,12 @@ def match_spotify(
 
     logger.info(f"Index built: {len(index.tracks)} tracks, {len(index.token_index)} tokens")
 
-    logger.info("Amazon link fetching enabled (with caching)" if with_amazon_links else "Amazon link fetching disabled")
+    if with_lucida_links:
+        logger.info("Lucida link display enabled (cache only, no searches)")
+    elif with_amazon_links:
+        logger.info("Amazon link fetching enabled (with caching)")
+    else:
+        logger.info("Amazon link fetching disabled")
 
     # Match each Spotify track (limit to first N tracks)
     # Updated tuple: (track_num, spotify_track, matches, amazon_url, amazon_price, amazon_page_title, from_cache, url_score)
@@ -544,7 +832,47 @@ def match_spotify(
         amazon_page_title: str | None = None
         from_cache = False
         
-        if with_amazon_links:
+        if with_lucida_links:
+            # Only check cache, no searches
+            try:
+                from .amazon_cache import AmazonCache, generate_cache_key
+                
+                cache = AmazonCache()
+                cache_key = generate_cache_key(spotify_track.artist, spotify_track.title, spotify_track.album)
+                cached_results = cache.get(cache_key)
+                
+                if cached_results is not None:
+                    # Check if this is a "no results found" marker (empty list)
+                    if len(cached_results) == 0:
+                        # "No results" was cached - skip this track
+                        pass
+                    else:
+                        # Filter out podcast URLs even from cache (same as amazon_service does)
+                        valid_results = [
+                            r for r in cached_results
+                            if r.url and "/podcasts/" not in r.url.lower() and "/podcast/" not in r.url.lower()
+                        ]
+                        
+                        if valid_results:
+                            # Results are cached
+                            from_cache = True
+                            result = valid_results[0]
+                            amazon_url = result.url
+                            amazon_price = result.price
+                            amazon_page_title = result.page_title
+                            
+                            # If page_title is missing, construct it from the search result title/artist
+                            if not amazon_page_title:
+                                if result.title and result.artist:
+                                    amazon_page_title = f"{result.title} - {result.artist}"
+                                elif result.title:
+                                    amazon_page_title = result.title
+                                elif result.artist:
+                                    amazon_page_title = result.artist
+                            logger.debug(f"Using cached Amazon link for Lucida: {spotify_track.title}")
+            except Exception as e:
+                logger.warning(f"Failed to get cached Amazon link for {spotify_track.title}: {e}")
+        elif with_amazon_links:
             try:
                 import time
                 from .amazon_cache import AmazonCache, generate_cache_key
@@ -606,6 +934,11 @@ def match_spotify(
                 logger.warning(f"Failed to search Amazon for {spotify_track.title}: {e}")
 
         # Calculate URL score if we have Amazon data (pass URL for track/album boost)
+        # If we have a URL but no page_title, try to construct one from Spotify track info as fallback
+        if amazon_url and not amazon_page_title:
+            # Fallback: use Spotify track info to construct a page title for scoring
+            amazon_page_title = f"{spotify_track.title} - {spotify_track.artist}"
+        
         url_score = calculate_url_score(amazon_page_title, spotify_track.title, spotify_track.artist, amazon_url) if amazon_page_title else 0.0
         
         if not candidate_ids:
@@ -653,9 +986,7 @@ def match_spotify(
             # Calculate match score (returns 0.0-1.0, convert to 0-100)
             # Note: calculate_match_score expects (library_track, rekordbox_track)
             # We're matching Spotify track (as LibraryTrack) against Rekordbox track
-            score_0_1 = calculate_match_score(
-                spotify_lib_track, rb_track, duration_hint=True
-            )
+            score_0_1 = calculate_match_score(spotify_lib_track, rb_track)
             score_0_100 = score_0_1 * 100.0
 
             matches.append((lib_track, score_0_100))
@@ -663,33 +994,57 @@ def match_spotify(
         # Sort by score descending
         matches.sort(key=lambda x: x[1], reverse=True)
 
-        # If exclude_matching is True, skip tracks that have matches ≥90
+        # If exclude_matching is True, skip tracks that have matches ≥ match_threshold
         if exclude_matching:
-            has_good_match = any(score >= 90.0 for _, score in matches)
+            has_good_match = any(score >= match_threshold for _, score in matches)
             if has_good_match:
                 continue  # Skip this track
 
         # Keep top matches
         results.append((idx, spotify_track, matches, amazon_url, amazon_price, amazon_page_title, from_cache, url_score))
+        
+        # If debug mode, show debug output immediately and exit
+        if spotify_id:
+            print_match_debug(
+                spotify_track,
+                spotify_tokens,
+                candidate_ids,
+                matches,
+                index,
+                rekordbox_tsv_tracks,
+            )
+            return  # Exit early, don't show table
 
-    # Sort results by URL score if requested (only when using --with-amazon-links)
-    if sort_by_url_score and with_amazon_links:
+    # Sort results by URL score if requested (only when using --with-amazon-links or --with-lucida-links)
+    if sort_by_url_score and (with_amazon_links or with_lucida_links):
         results.sort(key=lambda x: x[7], reverse=True)  # x[7] is url_score, sort descending
+    # Sort results by match score if requested (only when not using link mode)
+    elif sort_by_score and not (with_amazon_links or with_lucida_links):
+        def best_match_score(result: tuple[int, object, list[tuple[LibraryTrack, float]], str | None, str | None, str | None, bool, float]) -> float:
+            matches = result[2]
+            if not matches:
+                return 0.0
+            return matches[0][1]
+        results.sort(key=best_match_score, reverse=True)
 
     # Display results
     print()
     logger.info(f"Completed processing {len(results)} tracks")
     print()
-    # Build header based on whether Amazon links are shown
+    # Build header based on whether Amazon links or Lucida links are shown
     # Spotify Title: 32 (4/5 of 40), Spotify Artist: 24 (4/5 of 30)
-    # Amazon URL column: ~87 characters (67 + 20)
-    amazon_url_col_width = 87
-    if with_amazon_links:
-        print(f"{'#':<4} {'Spotify ID':<22} {'Spotify Title':<32} {'Spotify Artist':<24} {'URL Score':<10} {'Amazon URL':<{amazon_url_col_width}} {'Existing':<8}")
-        print("-" * (4 + 22 + 32 + 24 + 10 + amazon_url_col_width + 8))
+    # URL column: ~87 characters (67 + 20)
+    url_col_width = 87
+    if with_lucida_links:
+        print(f"{'#':<4} {'Spotify ID':<22} {'Spotify Title':<32} {'Spotify Artist':<24} {'URL Score':<10} {'Download Url':<{url_col_width}} {'Existing':<8}")
+        print("-" * (4 + 22 + 32 + 24 + 10 + url_col_width + 8))
+    elif with_amazon_links:
+        print(f"{'#':<4} {'Spotify ID':<22} {'Spotify Title':<32} {'Spotify Artist':<24} {'URL Score':<10} {'Amazon URL':<{url_col_width}} {'Existing':<8}")
+        print("-" * (4 + 22 + 32 + 24 + 10 + url_col_width + 8))
     else:
-        print(f"{'#':<4} {'Spotify Title':<32} {'Spotify Artist':<24} {'Score':<8} {'≥90':<5} {'Match Title':<40} {'Match Artist':<30} {'Filename':<50} {'Existing':<8}")
-        print("-" * 202)
+        threshold_label = f"≥{int(match_threshold)}" if match_threshold.is_integer() else f"≥{match_threshold:g}"
+        print(f"{'#':<4} {'Spotify ID':<22} {'Spotify Title':<32} {'Spotify Artist':<24} {'Score':<8} {threshold_label:<5} {'Match Title':<40} {'Match Artist':<30} {'Filename':<50} {'Existing':<8}")
+        print("-" * (4 + 22 + 32 + 24 + 8 + 5 + 40 + 30 + 50 + 8))
 
     for track_num, spotify_track, matches, amazon_url, amazon_price, amazon_page_title, from_cache, url_score in results:
         # Spotify Title: 32 chars, Artist: 24 chars (4/5 of original)
@@ -699,36 +1054,41 @@ def match_spotify(
 
         if not matches:
             # No matches
-            if with_amazon_links:
-                amazon_display = ""
+            if with_lucida_links or with_amazon_links:
+                url_display = ""
                 if amazon_url:
-                    # Show full Amazon URL
-                    cache_indicator = " (c)" if from_cache else ""
-                    url_with_indicator = f"{amazon_url}{cache_indicator}"
-                    
-                    # Calculate available space for title (column width minus URL and separator)
-                    available_space = amazon_url_col_width - len(url_with_indicator) - 3  # -3 for " | "
-                    
-                    if amazon_page_title:
-                        # Show as much title as fits in the available column width
-                        if len(amazon_page_title) <= available_space:
-                            amazon_display = f"{url_with_indicator} | {amazon_page_title}"
-                        else:
-                            truncated_title = amazon_page_title[:available_space - 2] + ".."
-                            amazon_display = f"{url_with_indicator} | {truncated_title}"
+                    if with_lucida_links:
+                        # Build Lucida download URL (no cache indicator, no page title)
+                        lucida_url = f"https://lucida.to/?url={amazon_url}"
+                        url_display = lucida_url
                     else:
-                        amazon_display = f"{url_with_indicator} | null"
+                        # Show full Amazon URL with cache indicator and page title
+                        cache_indicator = " (c)" if from_cache else ""
+                        url_with_indicator = f"{amazon_url}{cache_indicator}"
+                        
+                        # Calculate available space for title (column width minus URL and separator)
+                        available_space = url_col_width - len(url_with_indicator) - 3  # -3 for " | "
+                        
+                        if amazon_page_title:
+                            # Show as much title as fits in the available column width
+                            if len(amazon_page_title) <= available_space:
+                                url_display = f"{url_with_indicator} | {amazon_page_title}"
+                            else:
+                                truncated_title = amazon_page_title[:available_space - 2] + ".."
+                                url_display = f"{url_with_indicator} | {truncated_title}"
+                        else:
+                            url_display = f"{url_with_indicator} | null"
                 else:
-                    amazon_display = "Not found"
-                # Show URL score when with_amazon_links, otherwise show 0.0 for match score
-                score_display = f"{url_score:>6.1f}" if with_amazon_links else "0.0"
-                existing_display = "✅" if matches and any(score >= 90.0 for _, score in matches) else "❌"
-                print(f"{track_num:<4} {spotify_id_display:<22} {title_display:<32} {artist_display:<24} {score_display:<10} {amazon_display:<{amazon_url_col_width}} {existing_display:<8}")
+                    url_display = "Not found (no cached Amazon URL)" if with_lucida_links else "Not found"
+                # Show URL score when showing links, otherwise show 0.0 for match score
+                score_display = f"{url_score:>6.1f}" if (with_amazon_links or with_lucida_links) else "0.0"
+                existing_display = "✅" if matches and any(score >= match_threshold for _, score in matches) else "❌"
+                print(f"{track_num:<4} {spotify_id_display:<22} {title_display:<32} {artist_display:<24} {score_display:<10} {url_display:<{url_col_width}} {existing_display:<8}")
             else:
                 print(f"{track_num:<4} {title_display:<32} {artist_display:<24} {'0.0':<8} {'0':<5} {'No match':<40} {'':<30} {'':<50} {'❌':<6}")
         else:
-            # Count matches ≥90
-            matches_90_plus = sum(1 for _, score in matches if score >= 90.0)
+            # Count matches ≥ match_threshold
+            matches_90_plus = sum(1 for _, score in matches if score >= match_threshold)
             best_match, best_score = matches[0]
 
             best_title = best_match.title[:38] + ".." if len(best_match.title) > 40 else best_match.title
@@ -737,47 +1097,52 @@ def match_spotify(
             if len(filename) > 48:
                 filename = "..." + filename[-45:]
 
-            status = "✅" if best_score >= 90.0 else "❌"
-            existing_display = "✅" if best_score >= 90.0 else "❌"
+            status = "✅" if best_score >= match_threshold else "❌"
+            existing_display = "✅" if best_score >= match_threshold else "❌"
 
-            if with_amazon_links:
-                # Format Amazon URL for display (full URL)
-                amazon_display = ""
+            if with_lucida_links or with_amazon_links:
+                # Format URL for display
+                url_display = ""
                 if amazon_url:
-                    # Show full Amazon URL
-                    cache_indicator = " (c)" if from_cache else ""
-                    url_with_indicator = f"{amazon_url}{cache_indicator}"
-                    
-                    # Calculate available space for title (column width minus URL and separator)
-                    available_space = amazon_url_col_width - len(url_with_indicator) - 3  # -3 for " | "
-                    
-                    if amazon_page_title:
-                        # Show as much title as fits in the available column width
-                        if len(amazon_page_title) <= available_space:
-                            amazon_display = f"{url_with_indicator} | {amazon_page_title}"
-                        else:
-                            truncated_title = amazon_page_title[:available_space - 2] + ".."
-                            amazon_display = f"{url_with_indicator} | {truncated_title}"
+                    if with_lucida_links:
+                        # Build Lucida download URL (no cache indicator, no page title)
+                        lucida_url = f"https://lucida.to/?url={amazon_url}"
+                        url_display = lucida_url
                     else:
-                        amazon_display = f"{url_with_indicator} | null"
+                        # Show full Amazon URL with cache indicator and page title
+                        cache_indicator = " (c)" if from_cache else ""
+                        url_with_indicator = f"{amazon_url}{cache_indicator}"
+                        
+                        # Calculate available space for title (column width minus URL and separator)
+                        available_space = url_col_width - len(url_with_indicator) - 3  # -3 for " | "
+                        
+                        if amazon_page_title:
+                            # Show as much title as fits in the available column width
+                            if len(amazon_page_title) <= available_space:
+                                url_display = f"{url_with_indicator} | {amazon_page_title}"
+                            else:
+                                truncated_title = amazon_page_title[:available_space - 2] + ".."
+                                url_display = f"{url_with_indicator} | {truncated_title}"
+                        else:
+                            url_display = f"{url_with_indicator} | null"
                 else:
-                    amazon_display = "Not found"
-                # Show URL score (not best_score) when with_amazon_links is enabled
-                print(f"{track_num:<4} {spotify_id_display:<22} {title_display:<32} {artist_display:<24} {url_score:>6.1f}  {amazon_display:<{amazon_url_col_width}} {status:<6}")
+                    url_display = "Not found (no cached Amazon URL)" if with_lucida_links else "Not found"
+                # Show URL score (not best_score) when showing links
+                print(f"{track_num:<4} {spotify_id_display:<22} {title_display:<32} {artist_display:<24} {url_score:>6.1f}  {url_display:<{url_col_width}} {status:<6}")
             else:
-                # Show full match details
-                print(f"{track_num:<4} {title_display:<32} {artist_display:<24} {best_score:>6.1f}  {matches_90_plus:<5} {best_title:<40} {best_artist:<30} {filename:<50} {existing_display:<8}")
+                # Show best match
+                print(f"{track_num:<4} {spotify_id_display:<22} {title_display:<32} {artist_display:<24} {best_score:>6.1f}  {matches_90_plus:<5} {best_title:<40} {best_artist:<30} {filename:<50} {existing_display:<8}")
 
-            # Show second match if available and different from first (only when not showing Amazon links)
-            if len(matches) > 1 and not with_amazon_links:
-                second_match, second_score = matches[1]
-                second_title = second_match.title[:38] + ".." if len(second_match.title) > 40 else second_match.title
-                second_artist = second_match.artist[:28] + ".." if len(second_match.artist) > 30 else second_match.artist
-                second_filename = second_match.rekordbox_file_path or ""
-                if len(second_filename) > 48:
-                    second_filename = "..." + second_filename[-45:]
-                second_status = "✅" if second_score >= 90.0 else "❌"
-                print(f"{'':<4} {'':<32} {'':<24} {second_score:>6.1f}  {'':<5} {second_title:<40} {second_artist:<30} {second_filename:<50} {second_status:<6}")
+                # Show additional matches if requested
+                if top_matches > 1:
+                    for extra_match, extra_score in matches[1:top_matches]:
+                        extra_title = extra_match.title[:38] + ".." if len(extra_match.title) > 40 else extra_match.title
+                        extra_artist = extra_match.artist[:28] + ".." if len(extra_match.artist) > 30 else extra_match.artist
+                        extra_filename = extra_match.rekordbox_file_path or ""
+                        if len(extra_filename) > 48:
+                            extra_filename = "..." + extra_filename[-45:]
+                        extra_status = "✅" if extra_score >= match_threshold else "❌"
+                        print(f"{'':<4} {'':<22} {'':<32} {'':<24} {extra_score:>6.1f}  {'':<5} {extra_title:<40} {extra_artist:<30} {extra_filename:<50} {extra_status:<6}")
 
     print()
     db.close()
@@ -871,7 +1236,36 @@ def get_amazon_link(artist: str, title: str) -> None:
 def main() -> None:
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
-        description="Music collection management CLI",
+        description="""Music collection management CLI for DJs.
+
+Manage your music collection by importing tracks from Spotify playlists and Rekordbox,
+matching them against your existing library, finding purchase links, and tracking downloads.
+
+Commands:
+  tracks list              Search and list tracks in the database
+  match-spotify            Match Spotify playlist tracks against Rekordbox collection
+  import-rekordbox         Import Rekordbox collection and match with existing tracks
+  get-amazon-link          Search Amazon Music for a specific track
+  mark-downloaded          Mark tracks as downloaded based on a file list
+
+Examples:
+  # Search for tracks
+  mm tracks list --search "octave untold"
+  
+  # Match a Spotify playlist (CSV from chosic.com)
+  mm match-spotify playlists/koko-groove.csv --with-amazon-links
+  
+  # Import Rekordbox collection
+  mm import-rekordbox rekordbox/all-tracks.txt
+  
+  # Find Amazon link for a specific track
+  mm get-amazon-link --artist "LF SYSTEM" --title "Your Love"
+  
+  # Mark downloaded files
+  mm mark-downloaded downloads.txt
+
+For detailed help on any command, use: mm <command> --help
+""",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
@@ -940,9 +1334,21 @@ def main() -> None:
         help="Maximum number of Spotify tracks to process (default: 20)",
     )
     match_parser.add_argument(
+        "--top",
+        type=int,
+        default=1,
+        help="Number of matches to display per track (default: 1)",
+    )
+    match_parser.add_argument(
         "--exclude-matching",
         action="store_true",
-        help="Exclude tracks that have matches with score ≥90 (show only unmatched or low-score matches)",
+        help="Exclude tracks that have matches with score ≥match-threshold (show only unmatched or low-score matches)",
+    )
+    match_parser.add_argument(
+        "--match-threshold",
+        type=float,
+        default=90.0,
+        help="Score threshold for exclude-matching and display (default: 90.0)",
     )
     match_parser.add_argument(
         "--with-amazon-links",
@@ -950,9 +1356,24 @@ def main() -> None:
         help="Fetch Amazon Music links for tracks (uses cache to avoid duplicate searches)",
     )
     match_parser.add_argument(
+        "--with-lucida-links",
+        action="store_true",
+        help="Show Lucida download links (cache only, no searches). Requires cached Amazon URLs.",
+    )
+    match_parser.add_argument(
         "--sort-by-url-score",
         action="store_true",
-        help="Sort results by URL score (highest first) when using --with-amazon-links",
+        help="Sort results by URL score (highest first) when using --with-amazon-links or --with-lucida-links",
+    )
+    match_parser.add_argument(
+        "--sort-by-score",
+        action="store_true",
+        help="Sort results by match score (highest first) when not using --with-amazon-links or --with-lucida-links",
+    )
+    match_parser.add_argument(
+        "--spotify-id",
+        type=str,
+        help="Debug mode: Match only this specific Spotify track ID and show detailed scoring",
     )
 
     # import-rekordbox command
@@ -1001,6 +1422,29 @@ def main() -> None:
         help="Track title",
     )
 
+    # mark-downloaded command
+    mark_parser = subparsers.add_parser(
+        "mark-downloaded",
+        help="Mark tracks as downloaded based on a file list",
+    )
+    mark_parser.add_argument(
+        "file_list",
+        type=Path,
+        help="Path to text file with one filename per line",
+    )
+    mark_parser.add_argument(
+        "--db",
+        type=Path,
+        default=Path("music.db"),
+        help="Path to SQLite database (default: music.db)",
+    )
+    mark_parser.add_argument(
+        "--threshold",
+        type=float,
+        default=85.0,
+        help="Minimum match score (0-100, default: 85.0)",
+    )
+
     args = parser.parse_args()
 
     if args.command == "tracks":
@@ -1029,9 +1473,14 @@ def main() -> None:
             db_path=args.db,
             rekordbox_tsv_path=args.rekordbox_tsv,
             limit=args.limit,
+            top_matches=args.top,
+            match_threshold=args.match_threshold,
             exclude_matching=args.exclude_matching,
             with_amazon_links=args.with_amazon_links,
+            with_lucida_links=args.with_lucida_links,
             sort_by_url_score=args.sort_by_url_score,
+            sort_by_score=args.sort_by_score,
+            spotify_id=args.spotify_id,
         )
     elif args.command == "import-rekordbox":
         if not args.tsv_file.exists():
@@ -1050,6 +1499,16 @@ def main() -> None:
             sys.exit(1)
         
         get_amazon_link(artist=args.artist, title=args.title)
+    elif args.command == "mark-downloaded":
+        if not args.file_list.exists():
+            logger.error(f"File list not found: {args.file_list}")
+            sys.exit(1)
+        
+        mark_downloaded(
+            file_list_path=args.file_list,
+            db_path=args.db,
+            threshold=args.threshold,
+        )
     else:
         parser.print_help()
         sys.exit(1)

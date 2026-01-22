@@ -443,6 +443,23 @@ class LibraryDB:
 
         return [self._row_to_track(row) for row in rows]
 
+    def get_undownloaded_tracks_without_rekordbox(self) -> list[LibraryTrack]:
+        """Get tracks that are not downloaded and don't have Rekordbox file paths.
+
+        Returns:
+            List of LibraryTrack objects
+        """
+        if self.conn is None:
+            raise RuntimeError("Database connection not initialized")
+
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT * FROM tracks WHERE downloaded = 0 AND rekordbox_file_path IS NULL"
+        )
+        rows = cursor.fetchall()
+
+        return [self._row_to_track(row) for row in rows]
+
     def get_tracks_by_playlist(self, playlist_name: str) -> list[LibraryTrack]:
         """Get tracks by playlist name.
 
