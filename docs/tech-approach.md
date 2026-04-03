@@ -33,9 +33,10 @@
 1. **Tenancy:** Every row keyed by `user_id` (Firebase UID).
 2. **Phase 1 recommendation:** **PostgreSQL** accessed from **Python** (**SQLAlchemy 2** + **Alembic**, or equivalent). Keeps ORM and migrations next to matching code.
 3. **`apps/api`** — FastAPI app; dependencies only via **`uv`** + **`apps/api/pyproject.toml`** and **`uv.lock`** (no `requirements.txt`). Run `uv sync` from `apps/api`; `uv sync --group dev` for pytest/httpx.
-4. **Schema:** **`library_snapshots`**, **`library_tracks`**, **`source_tracks`**, **`playlists`**, **`source_track_playlists`**, **`source_library_links`** — see [`data-model.md`](./data-model.md).
-5. **Library snapshots & match decisions:** Aligned with [`top_level_spec.md`](./top_level_spec.md) §7 (`library_snapshot_id`, durable confirm/reject/pick-alternative).
-6. **Search:** **Postgres FTS** / **`pg_trgm`** for catalog search and LLM `search_library`-style tools; same role as the legacy inverted index described in [`old/tech-approach.md`](./old/tech-approach.md).
+4. **`apps/web-frontend`** — Vite + React + Tailwind; **`npm install`** / **`npm run dev`**. Proxies `/api` to FastAPI in dev (`vite.config.ts`). See `apps/web-frontend/README.md`.
+5. **Schema:** **`library_snapshots`**, **`library_tracks`**, **`source_tracks`**, **`playlists`**, **`source_track_playlists`**, **`source_library_links`** — see [`data-model.md`](./data-model.md).
+6. **Library snapshots & match decisions:** Aligned with [`top_level_spec.md`](./top_level_spec.md) §7 (`library_snapshot_id`, durable confirm/reject/pick-alternative).
+7. **Search:** **Postgres FTS** / **`pg_trgm`** for catalog search and LLM `search_library`-style tools; same role as the legacy inverted index described in [`old/tech-approach.md`](./old/tech-approach.md).
 
 ## 4. Authentication
 

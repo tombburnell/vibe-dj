@@ -12,6 +12,8 @@ Automate downloading tracks for your DJ collection by comparing Spotify playlist
 6. **[Archived requirements](docs/old/old_reqs.md)** — detailed CLI-era functional spec and acceptance criteria.
 7. **[Legacy implementation](docs/old/tech-approach.md)** — archived SQLite / `mm` CLI era detail.
 
+**Apps:** `apps/api` (FastAPI, `uv sync`) · `apps/web-frontend` (Vite, `npm install && npm run dev` — proxies `/api` to port 8000).
+
 ## Features
 
 - **Extract Spotify playlists** - No developer account needed! Works with public playlist URLs
