@@ -13,9 +13,9 @@ Comprehensive code review agent prompt. Use this agent to review PRs and branche
 - Testing coverage and quality
 - Code cleanliness and best practices
 
-**Usage**: Reference this file when running code reviews. The agent will check against `docs/code-standards.md` automatically.
+**Usage**: Reference this file when running code reviews. The agent will check against `code-standards.md` automatically.
 
-### `docs/code-standards.md` (moved from `agents/`)
+### `code-standards.md` (moved from `agents/`)
 
 Definitive coding standards and best practices document. This should be referenced by:
 
@@ -97,13 +97,13 @@ Guide for reviewing implementation plans before development starts.
 
 ### For Coding Tasks
 
-1. Reference `docs/code-standards.md` at the start of coding tasks
+1. Reference `code-standards.md` at the start of coding tasks
 2. Check the "Quick Reference Checklist" before completing code
 3. Ensure all code follows the examples and avoids anti-patterns
 
 ### For Code Reviews
 
-1. The `code-review.md` agent automatically references `docs/code-standards.md`
+1. The `code-review.md` agent automatically references `code-standards.md`
 2. All findings should align with standards documented there
 3. Use standards as the basis for severity assessment
 
@@ -116,7 +116,7 @@ Guide for reviewing implementation plans before development starts.
 
 ### For Updating Standards
 
-1. When new patterns emerge or issues are found, update `docs/code-standards.md`
+1. When new patterns emerge or issues are found, update `code-standards.md`
 2. Keep examples current with actual codebase patterns
 3. Update the "Last Updated" section when making changes
 
@@ -125,7 +125,7 @@ Guide for reviewing implementation plans before development starts.
 **Writing Code**:
 
 ```
-1. Read docs/code-standards.md
+1. Read code-standards.md
 2. Follow the Quick Reference Checklist
 3. Reference examples for your layer (Frontend/Backend)
 4. Avoid all listed anti-patterns

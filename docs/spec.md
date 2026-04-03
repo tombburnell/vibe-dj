@@ -1,8 +1,8 @@
 # ⚠️ DEPRECATED
 
-This specification has been merged into [`tech-approach.md`](./tech-approach.md).
+Current technical documentation is [`tech-approach.md`](./tech-approach.md) (web / Docker / Postgres). Legacy SQLite + `mm` CLI detail is in [`old/tech-approach.md`](./old/tech-approach.md).
 
-Please refer to `tech-approach.md` for current technical documentation.
+This JSON-era file is deprecated; see those docs instead.
 
 ---
 
@@ -12,7 +12,7 @@ Please refer to `tech-approach.md` for current technical documentation.
 
 > **This document is deprecated and kept for historical reference only.**
 >
-> All technical specifications have been consolidated into [`tech-approach.md`](./tech-approach.md), which reflects the current SQLite-based architecture with unified `LibraryTrack` entities.
+> SQLite-era specifications were consolidated into [`old/tech-approach.md`](./old/tech-approach.md). The **current** architecture is described in [`tech-approach.md`](./tech-approach.md).
 
 A simple JSON-based database system for managing DJ music collection tracks, tracking their sources (Spotify playlists), download status, Rekordbox collection status, and Amazon Music purchase links.
 

@@ -2,6 +2,16 @@
 
 Automate downloading tracks for your DJ collection by comparing Spotify playlists with your rekordbox collection and generating Amazon Music purchase links for missing tracks.
 
+## Documentation
+
+1. **[Product spec](docs/top_level_spec.md)** — current direction (web app, hosting, matching, snapshots).
+2. **[UI spec](docs/UI.md)** — layout, routes, primary/secondary tables, auth guard.
+3. **[Design system](docs/design-system.md)** — DJ-style dark/light themes, density, Tailwind, Radix/shadcn.
+4. **[Data model](docs/data-model.md)** — Postgres: `source_tracks`, `library_tracks`, playlists, links.
+5. **[Technical approach](docs/tech-approach.md)** — React (Vite) + TypeScript frontend, Python API, Docker, Postgres.
+6. **[Archived requirements](docs/old/old_reqs.md)** — detailed CLI-era functional spec and acceptance criteria.
+7. **[Legacy implementation](docs/old/tech-approach.md)** — archived SQLite / `mm` CLI era detail.
+
 ## Features
 
 - **Extract Spotify playlists** - No developer account needed! Works with public playlist URLs

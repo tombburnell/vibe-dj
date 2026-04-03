@@ -1,0 +1,62 @@
+"""FastAPI entrypoint."""
+
+from __future__ import annotations
+
+import os
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from track_mapper_api.routers import library_tracks, source_tracks
+
+
+def _cors_origins() -> list[str]:
+    raw = os.environ.get("CORS_ORIGINS", "")
+    if raw.strip():
+        return [o.strip() for o in raw.split(",") if o.strip()]
+    return [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ]
+
+
+def create_app() -> FastAPI:
+    app = FastAPI(
+        title="Track Mapper API",
+        description="Library and source tracks API (dummy data in development).",
+        version="0.1.0",
+    )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_origins(),
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    app.include_router(library_tracks.router, prefix="/api")
+    app.include_router(source_tracks.router, prefix="/api")
+
+    @app.get("/health")
+    def health() -> dict[str, str]:
+        return {"status": "ok"}
+
+    return app
+
+
+app = create_app()
+
+
+def run_dev() -> None:
+    """CLI entry for `uv run track-mapper-api` (optional)."""
+    import uvicorn
+
+    uvicorn.run(
+        "track_mapper_api.main:app",
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", "8000")),
+        reload=True,
+    )
+
+
+if __name__ == "__main__":
+    run_dev()

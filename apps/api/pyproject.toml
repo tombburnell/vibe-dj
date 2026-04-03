@@ -1,0 +1,30 @@
+[project]
+name = "track-mapper-api"
+version = "0.1.0"
+description = "Track Mapper HTTP API (FastAPI)"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.27.0",
+    "pytest>=8.0.0",
+]
+
+[project.scripts]
+track-mapper-api = "track_mapper_api.main:run_dev"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["track_mapper_api"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

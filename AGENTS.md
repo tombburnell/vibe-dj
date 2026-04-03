@@ -14,14 +14,14 @@
 When working on this codebase as an AI assistant:
 
 1. **Read this file (`AGENTS.md`)** - Project structure, build/test commands, coding style, testing guidelines
-2. **Reference `docs/code-standards.md`** - Detailed coding standards (architecture, types, security, performance) when writing code
+2. **Reference `code-standards.md`** - Detailed coding standards (architecture, types, security, performance) when writing code
 3. **Use `agents/code-review.md`** - Structured code review prompt when reviewing PRs/branches
 4. **Check `docs/`** - Architecture documentation (`docs/architecture.md`, `docs/architectural-patterns.md`, `docs/background-jobs.md`, `docs/db-schema.md`)
 
 **Key Files:**
 
 - `AGENTS.md` (this file) - Project guidelines and commands
-- `docs/code-standards.md` - Coding standards and best practices
+- `code-standards.md` - Coding standards and best practices
 - `agents/code-review.md` - Code review agent prompt
 - `agents/pr-checklist.md` - PR quality checklist (common issues from historical reviews)
 - `docs/` - Technical architecture documentation

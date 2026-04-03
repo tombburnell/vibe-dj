@@ -1,6 +1,8 @@
-q# Music Collection Automation — Functional Requirements
+# Music Collection Automation — Functional Requirements (archived)
 
-> Inputs derived from user requirements and implementation discussions. This specification focuses on user requirements and deliverables for MVP. Implementation details are documented separately in [`spec.md`](./spec.md).
+> **Archived:** This file preserves the detailed functional spec written for the earlier CLI/SQLite MVP. Current product direction and hosting model are in [`top_level_spec.md`](../top_level_spec.md). CLI-era implementation detail (SQLite, matching, CLI) is in [`tech-approach.md`](./tech-approach.md) in this folder. Current architecture is in [`tech-approach.md`](../tech-approach.md) at repo root. Historical JSON-era detail is in [`spec.md`](../spec.md) (deprecated).
+
+> Inputs derived from user requirements and implementation discussions. This specification focuses on user requirements and deliverables for MVP. Implementation details are documented separately in [`spec.md`](../spec.md).
 
 ## High-Level Need & Rationale
 
@@ -534,7 +536,7 @@ This system automates the workflow of:
 - **A4**: Manual review before purchase is acceptable (system provides links, user verifies)
 - **A5**: CLI interface is sufficient for MVP (web UI is future enhancement)
 - **A6**: SQLite database is manageable for typical collection sizes (< 10k tracks)
-
+ 
 ### Technical Assumptions
 
 - **A7**: DuckDuckGo search remains reliable for finding Amazon links (bypasses bot detection)
@@ -631,7 +633,7 @@ This system automates the workflow of:
 
 ## Suggested Implementation Approach
 
-> **Note**: These are implementation suggestions, not requirements. Detailed technical approach documented in [`spec.md`](./spec.md).
+> **Note**: These are implementation suggestions, not requirements. Detailed technical approach documented in [`spec.md`](../spec.md) and [`tech-approach.md`](./tech-approach.md) (archived CLI/SQLite era).
 
 ### Matching Strategy
 
