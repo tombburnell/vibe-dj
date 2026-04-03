@@ -9,6 +9,9 @@ export function buildSourceTrackColumns(): ColumnDef<SourceTrack>[] {
   return [
     {
       accessorKey: "title",
+      size: 72,
+      minSize: 48,
+      maxSize: 560,
       header: ({ column }) => (
         <SortableHeader column={column}>Title</SortableHeader>
       ),
@@ -19,6 +22,9 @@ export function buildSourceTrackColumns(): ColumnDef<SourceTrack>[] {
     },
     {
       accessorKey: "artist",
+      size: 72,
+      minSize: 48,
+      maxSize: 560,
       header: ({ column }) => (
         <SortableHeader column={column}>Artist</SortableHeader>
       ),
@@ -26,6 +32,9 @@ export function buildSourceTrackColumns(): ColumnDef<SourceTrack>[] {
     },
     {
       accessorKey: "duration_ms",
+      size: 56,
+      minSize: 44,
+      maxSize: 120,
       header: ({ column }) => (
         <SortableHeader column={column}>
           <span className="tabular-nums">Time</span>
@@ -42,6 +51,9 @@ export function buildSourceTrackColumns(): ColumnDef<SourceTrack>[] {
     {
       id: "playlists",
       accessorFn: (row) => row.playlist_names.join(", "),
+      size: 160,
+      minSize: 80,
+      maxSize: 480,
       header: ({ column }) => (
         <SortableHeader column={column}>Playlists</SortableHeader>
       ),
@@ -57,6 +69,9 @@ export function buildSourceTrackColumns(): ColumnDef<SourceTrack>[] {
     {
       id: "downloaded",
       accessorFn: (row) => (row.local_file_path ? 1 : 0),
+      size: 44,
+      minSize: 36,
+      maxSize: 72,
       header: ({ column }) => (
         <SortableHeader column={column}>DL</SortableHeader>
       ),

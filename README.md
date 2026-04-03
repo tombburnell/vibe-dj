@@ -14,6 +14,8 @@ Automate downloading tracks for your DJ collection by comparing Spotify playlist
 
 **Apps:** `apps/api` (FastAPI, `uv sync`) · `apps/web-frontend` (Vite, `npm install && npm run dev` — proxies `/api` to port 8000).
 
+**Docker (Postgres + API + Vite, file watch reload):** from repo root run `docker compose -f docker-compose.local.yml up`. UI at http://localhost:5173, API at http://localhost:8000. DB URL: `postgresql+psycopg://trackmapper:trackmapper@localhost:5432/trackmapper`.
+
 ## Features
 
 - **Extract Spotify playlists** - No developer account needed! Works with public playlist URLs

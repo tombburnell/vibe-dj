@@ -1,33 +1,52 @@
-import { useMemo } from "react";
+import { useEffect, useState } from "react";
 
-import type { LibraryTrack } from "@/api/types";
-import type { SourceTrack } from "@/api/types";
+import { fetchMatchCandidates } from "@/api/endpoints";
+import type { MatchCandidate, SourceTrack } from "@/api/types";
+
+export type MatchCandidatesState = {
+  data: MatchCandidate[];
+  isLoading: boolean;
+  error: Error | null;
+};
 
 /**
- * Until `GET /api/source-tracks/:id/candidates` exists, rank library rows client-side
- * for the secondary panel (demo heuristic).
+ * Loads ranked library candidates from `GET /api/source-tracks/:id/candidates`.
  */
-export function useMatchCandidates(
-  selected: SourceTrack | null,
-  library: LibraryTrack[] | null,
-): LibraryTrack[] {
-  return useMemo(() => {
-    if (!selected || !library?.length) return [];
-    const title = selected.title.toLowerCase();
-    const artist = selected.artist.toLowerCase();
-    const scored = library.map((lib) => {
-      let score = 0;
-      if (lib.artist.toLowerCase() === artist) score += 3;
-      else if (lib.artist.toLowerCase().includes(artist.split(" ")[0] ?? "")) score += 1;
-      if (lib.title.toLowerCase().includes(title.slice(0, Math.min(title.length, 12))))
-        score += 2;
-      if (lib.title.toLowerCase() === title) score += 2;
-      return { lib, score };
-    });
-    return scored
-      .filter((x) => x.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 8)
-      .map((x) => x.lib);
-  }, [selected, library]);
+export function useMatchCandidates(selected: SourceTrack | null): MatchCandidatesState {
+  const [data, setData] = useState<MatchCandidate[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+
+  useEffect(() => {
+    if (!selected) {
+      setData([]);
+      setIsLoading(false);
+      setError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoading(true);
+    setError(null);
+
+    fetchMatchCandidates(selected.id)
+      .then((rows) => {
+        if (!cancelled) {
+          setData(rows);
+          setIsLoading(false);
+        }
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) {
+          setError(e instanceof Error ? e : new Error(String(e)));
+          setIsLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selected?.id]);
+
+  return { data, isLoading, error };
 }

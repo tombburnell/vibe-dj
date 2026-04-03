@@ -7,7 +7,13 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from track_mapper_api.routers import library_tracks, source_tracks
+from track_mapper_api.routers import (
+    library_snapshots,
+    library_tracks,
+    match,
+    playlists,
+    source_tracks,
+)
 
 
 def _cors_origins() -> list[str]:
@@ -23,7 +29,7 @@ def _cors_origins() -> list[str]:
 def create_app() -> FastAPI:
     app = FastAPI(
         title="Track Mapper API",
-        description="Library and source tracks API (dummy data in development).",
+        description="Library import, source playlists, and matching API.",
         version="0.1.0",
     )
     app.add_middleware(
@@ -34,7 +40,10 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.include_router(library_tracks.router, prefix="/api")
+    app.include_router(library_snapshots.router, prefix="/api")
+    app.include_router(playlists.router, prefix="/api")
     app.include_router(source_tracks.router, prefix="/api")
+    app.include_router(match.router, prefix="/api")
 
     @app.get("/health")
     def health() -> dict[str, str]:

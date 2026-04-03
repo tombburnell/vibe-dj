@@ -1,5 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
+import {
+  importLibrarySnapshot,
+  importPlaylistCsv,
+  runMatchJob,
+} from "@/api/endpoints";
 import type { LibraryTrack } from "@/api/types";
 import type { SourceTrack } from "@/api/types";
 import { AppShell } from "@/components/layout/AppShell";
@@ -24,6 +29,9 @@ export function WorkspacePage() {
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
   const [selectedLibraryId, setSelectedLibraryId] = useState<string | null>(null);
   const [dlFilter, setDlFilter] = useState<DlFilter>("all");
+  const [playlistName, setPlaylistName] = useState("Imported playlist");
+  const libraryFileRef = useRef<HTMLInputElement>(null);
+  const playlistFileRef = useRef<HTMLInputElement>(null);
 
   const sourceColumns = useMemo(() => buildSourceTrackColumns(), []);
   const libraryColumns = useMemo(() => buildLibraryTrackColumns(), []);
@@ -46,9 +54,8 @@ export function WorkspacePage() {
     [libraryRows, selectedLibraryId],
   );
 
-  const candidates = useMatchCandidates(
+  const matchCandidates = useMatchCandidates(
     mainView === "sources" ? selectedSource : null,
-    libraryQuery.data,
   );
 
   useEffect(() => {
@@ -66,7 +73,9 @@ export function WorkspacePage() {
   }, [filteredSources, selectedSourceId]);
 
   const primaryLoading =
-    mainView === "sources" ? sourceQuery.isLoading : libraryQuery.isLoading;
+    mainView === "sources"
+      ? sourceQuery.isLoading
+      : libraryQuery.isLoading && libraryQuery.data.length === 0;
 
   return (
     <AppShell>
@@ -77,6 +86,86 @@ export function WorkspacePage() {
             {mainView === "sources" ? (
               <DlFilterSelect value={dlFilter} onChange={setDlFilter} />
             ) : null}
+            <input
+              ref={libraryFileRef}
+              type="file"
+              accept=".tsv,text/tab-separated-values"
+              className="hidden"
+              onChange={async (e) => {
+                const f = e.target.files?.[0];
+                e.target.value = "";
+                if (!f) return;
+                try {
+                  const r = await importLibrarySnapshot(f);
+                  showToast(`Library import: ${r.track_count} tracks`, "info");
+                  libraryQuery.refetch();
+                } catch (err) {
+                  showToast(err instanceof Error ? err.message : String(err), "error");
+                }
+              }}
+            />
+            <button
+              type="button"
+              className="rounded border border-border bg-surface-2 px-2 py-1 text-[0.75rem] text-primary hover:bg-surface-1"
+              onClick={() => libraryFileRef.current?.click()}
+            >
+              Import Rekordbox TSV
+            </button>
+            <input
+              ref={playlistFileRef}
+              type="file"
+              accept=".csv,text/csv"
+              className="hidden"
+              onChange={async (e) => {
+                const f = e.target.files?.[0];
+                e.target.value = "";
+                if (!f) return;
+                const name = playlistName.trim() || "Imported playlist";
+                try {
+                  const r = await importPlaylistCsv(f, name);
+                  showToast(
+                    `Playlist: linked ${r.rows_linked}, new sources ${r.new_source_tracks}`,
+                    "info",
+                  );
+                  sourceQuery.refetch();
+                } catch (err) {
+                  showToast(err instanceof Error ? err.message : String(err), "error");
+                }
+              }}
+            />
+            <input
+              type="text"
+              value={playlistName}
+              onChange={(e) => setPlaylistName(e.target.value)}
+              placeholder="Playlist name"
+              className="w-40 rounded border border-border bg-surface-2 px-2 py-1 text-[0.75rem] text-primary placeholder:text-muted"
+              aria-label="Playlist name for CSV import"
+            />
+            <button
+              type="button"
+              className="rounded border border-border bg-surface-2 px-2 py-1 text-[0.75rem] text-primary hover:bg-surface-1"
+              onClick={() => playlistFileRef.current?.click()}
+            >
+              Import playlist CSV
+            </button>
+            <button
+              type="button"
+              className="rounded border border-border bg-surface-2 px-2 py-1 text-[0.75rem] text-primary hover:bg-surface-1"
+              onClick={async () => {
+                try {
+                  const r = await runMatchJob({});
+                  showToast(
+                    `Match: ${r.matched_count} auto-linked, ${r.skipped_count} skipped`,
+                    "info",
+                  );
+                  sourceQuery.refetch();
+                } catch (err) {
+                  showToast(err instanceof Error ? err.message : String(err), "error");
+                }
+              }}
+            >
+              Run matching
+            </button>
           </div>
         }
         primary={
@@ -84,7 +173,7 @@ export function WorkspacePage() {
             <h2 className="shrink-0 text-[0.7rem] font-semibold uppercase tracking-wide text-muted">
               {mainView === "sources" ? "Source tracks" : "Library tracks"}
             </h2>
-            <div className="min-h-0 flex-1 overflow-hidden">
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
               {primaryLoading ? (
                 <TableSkeleton rows={10} cols={5} />
               ) : mainView === "sources" ? (
@@ -110,6 +199,10 @@ export function WorkspacePage() {
                     setSelectedSourceId(null);
                   }}
                   emptyMessage="No library tracks."
+                  enableSorting={false}
+                  onNearEnd={libraryQuery.loadMore}
+                  hasMore={libraryQuery.hasMore}
+                  isLoadingMore={libraryQuery.isLoadingMore}
                 />
               )}
             </div>
@@ -120,7 +213,9 @@ export function WorkspacePage() {
             mainView={mainView}
             selectedSource={selectedSource}
             selectedLibrary={selectedLibrary}
-            candidates={candidates}
+            candidates={matchCandidates.data}
+            candidatesLoading={matchCandidates.isLoading}
+            candidatesError={matchCandidates.error}
           />
         }
       />

@@ -22,6 +22,11 @@ class LibraryTrackOut(BaseModel):
     created_at: datetime
 
 
+class LibraryTrackPageOut(BaseModel):
+    items: list[LibraryTrackOut]
+    next_cursor: str | None = None
+
+
 class SourceTrackOut(BaseModel):
     id: str
     user_id: str
@@ -40,3 +45,24 @@ class SourceTrackOut(BaseModel):
     amazon_search_url: str | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class LibrarySnapshotImportOut(BaseModel):
+    snapshot_id: str
+    track_count: int
+
+
+class PlaylistImportOut(BaseModel):
+    playlist_id: str
+    rows_linked: int
+    new_source_tracks: int
+
+
+class MatchRunOut(BaseModel):
+    library_snapshot_id: str | None
+    matched_count: int
+    skipped_count: int
+
+
+class LibraryCandidateOut(LibraryTrackOut):
+    match_score: float

@@ -9,6 +9,9 @@ export function buildLibraryTrackColumns(): ColumnDef<LibraryTrack>[] {
   return [
     {
       accessorKey: "title",
+      size: 72,
+      minSize: 48,
+      maxSize: 560,
       header: ({ column }) => (
         <SortableHeader column={column}>Title</SortableHeader>
       ),
@@ -19,6 +22,9 @@ export function buildLibraryTrackColumns(): ColumnDef<LibraryTrack>[] {
     },
     {
       accessorKey: "artist",
+      size: 72,
+      minSize: 48,
+      maxSize: 560,
       header: ({ column }) => (
         <SortableHeader column={column}>Artist</SortableHeader>
       ),
@@ -26,6 +32,9 @@ export function buildLibraryTrackColumns(): ColumnDef<LibraryTrack>[] {
     },
     {
       accessorKey: "duration_ms",
+      size: 56,
+      minSize: 44,
+      maxSize: 120,
       header: ({ column }) => (
         <SortableHeader column={column}>
           <span className="tabular-nums">Time</span>
@@ -41,6 +50,9 @@ export function buildLibraryTrackColumns(): ColumnDef<LibraryTrack>[] {
     },
     {
       accessorKey: "bpm",
+      size: 52,
+      minSize: 44,
+      maxSize: 100,
       header: ({ column }) => (
         <SortableHeader column={column}>
           <span className="tabular-nums">BPM</span>
@@ -55,6 +67,9 @@ export function buildLibraryTrackColumns(): ColumnDef<LibraryTrack>[] {
     },
     {
       accessorKey: "musical_key",
+      size: 44,
+      minSize: 36,
+      maxSize: 80,
       header: ({ column }) => (
         <SortableHeader column={column}>Key</SortableHeader>
       ),
@@ -62,6 +77,9 @@ export function buildLibraryTrackColumns(): ColumnDef<LibraryTrack>[] {
     },
     {
       accessorKey: "genre",
+      size: 100,
+      minSize: 56,
+      maxSize: 400,
       header: ({ column }) => (
         <SortableHeader column={column}>Genre</SortableHeader>
       ),

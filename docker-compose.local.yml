@@ -1,0 +1,78 @@
+# Local dev: Postgres + FastAPI (uv, reload) + Vite (reload).
+# Repo root is mounted so `apps/api` and `src/` stay in sync with track_mapper_api expectations.
+#
+# Usage (from repo root):
+#   docker compose -f docker-compose.local.yml up --build
+#
+# Then: http://localhost:5173  (UI) · API OpenAPI http://localhost:8000/docs
+#
+# Default DB (override via env if needed):
+#   postgresql+psycopg://trackmapper:trackmapper@localhost:5432/trackmapper
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: trackmapper
+      POSTGRES_PASSWORD: trackmapper
+      POSTGRES_DB: trackmapper
+    ports:
+      - "5432:5432"
+    volumes:
+      - trackmapper_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trackmapper -d trackmapper"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    image: ghcr.io/astral-sh/uv:python3.13-bookworm-slim
+    working_dir: /usr/src/track-mapper/apps/api
+    volumes:
+      - .:/usr/src/track-mapper
+      - api_venv:/usr/src/track-mapper/apps/api/.venv
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+psycopg://trackmapper:trackmapper@postgres:5432/trackmapper
+      DEV_USER_ID: dev-user
+      PYTHONUNBUFFERED: "1"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command:
+      - sh
+      - -c
+      - >-
+        uv sync &&
+        uv run alembic upgrade head &&
+        exec uv run uvicorn track_mapper_api.main:app
+        --host 0.0.0.0 --port 8000 --reload
+        --reload-dir /usr/src/track-mapper/apps/api/track_mapper_api
+        --reload-dir /usr/src/track-mapper/src
+
+  web:
+    image: node:22-alpine
+    working_dir: /usr/src/track-mapper/apps/web-frontend
+    volumes:
+      - .:/usr/src/track-mapper
+      - web_node_modules:/usr/src/track-mapper/apps/web-frontend/node_modules
+    ports:
+      - "5173:5173"
+    environment:
+      NODE_ENV: development
+      # Vite dev server runs inside Docker; proxy /api to the api service by name.
+      VITE_API_PROXY_TARGET: http://api:8000
+    depends_on:
+      - api
+    command:
+      - sh
+      - -c
+      - npm install && npm run dev -- --host 0.0.0.0 --port 5173
+
+volumes:
+  trackmapper_pgdata:
+  api_venv:
+  web_node_modules:

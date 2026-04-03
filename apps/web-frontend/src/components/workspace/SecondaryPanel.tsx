@@ -1,4 +1,5 @@
 import type { LibraryTrack } from "@/api/types";
+import type { MatchCandidate } from "@/api/types";
 import type { SourceTrack } from "@/api/types";
 import { formatDurationMs } from "@/lib/formatDuration";
 
@@ -8,7 +9,9 @@ type Props = {
   mainView: MainView;
   selectedSource: SourceTrack | null;
   selectedLibrary: LibraryTrack | null;
-  candidates: LibraryTrack[];
+  candidates: MatchCandidate[];
+  candidatesLoading: boolean;
+  candidatesError: Error | null;
 };
 
 export function SecondaryPanel({
@@ -16,14 +19,15 @@ export function SecondaryPanel({
   selectedSource,
   selectedLibrary,
   candidates,
+  candidatesLoading,
+  candidatesError,
 }: Props) {
   if (mainView === "sources") {
     if (!selectedSource) {
       return (
         <PanelChrome title="Matches">
           <p className="text-[var(--text-table)] text-muted">
-            Select a source row to see ranked library candidates (demo heuristic until API
-            exists).
+            Select a source row to see ranked library candidates from the API.
           </p>
         </PanelChrome>
       );
@@ -33,8 +37,12 @@ export function SecondaryPanel({
         <p className="mb-2 text-[0.7rem] text-muted">
           {selectedSource.artist} — {selectedSource.title}
         </p>
-        {candidates.length === 0 ? (
-          <p className="text-[var(--text-table)] text-muted">No heuristic matches.</p>
+        {candidatesError ? (
+          <p className="text-[var(--text-table)] text-red-400">{candidatesError.message}</p>
+        ) : candidatesLoading ? (
+          <p className="text-[var(--text-table)] text-muted">Loading candidates…</p>
+        ) : candidates.length === 0 ? (
+          <p className="text-[var(--text-table)] text-muted">No candidates for this source.</p>
         ) : (
           <ul className="space-y-1.5 text-[var(--text-table)]">
             {candidates.map((c) => (
@@ -45,6 +53,7 @@ export function SecondaryPanel({
                 <div className="font-medium text-primary">{c.title}</div>
                 <div className="text-secondary">{c.artist}</div>
                 <div className="tabular-nums text-muted">
+                  score {(c.match_score * 100).toFixed(0)}% ·{" "}
                   {formatDurationMs(c.duration_ms)} · {c.bpm != null ? `${c.bpm} BPM` : "—"} ·{" "}
                   {c.musical_key ?? "—"}
                 </div>

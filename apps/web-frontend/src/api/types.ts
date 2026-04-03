@@ -15,6 +15,13 @@ export type LibraryTrack = {
   created_at: string;
 };
 
+export type LibraryTrackPage = {
+  items: LibraryTrack[];
+  next_cursor: string | null;
+};
+
+export type MatchCandidate = LibraryTrack & { match_score: number };
+
 export type SourceTrack = {
   id: string;
   user_id: string;

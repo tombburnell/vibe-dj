@@ -7,7 +7,7 @@ import {
   type SortingState,
 } from "@tanstack/react-table";
 import clsx from "clsx";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type Props<T> = {
   data: T[];
@@ -16,6 +16,12 @@ type Props<T> = {
   selectedId: string | null;
   onRowClick: (row: T) => void;
   emptyMessage?: string;
+  /** When false, headers are not sortable (e.g. server-paginated library). */
+  enableSorting?: boolean;
+  /** Fire when the scroll container is near the bottom (infinite scroll). */
+  onNearEnd?: () => void;
+  hasMore?: boolean;
+  isLoadingMore?: boolean;
 };
 
 export function DataTable<T>({
@@ -25,8 +31,13 @@ export function DataTable<T>({
   selectedId,
   onRowClick,
   emptyMessage = "No rows",
+  enableSorting = true,
+  onNearEnd,
+  hasMore = false,
+  isLoadingMore = false,
 }: Props<T>) {
   const [sorting, setSorting] = useState<SortingState>([]);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   const table = useReactTable({
     data,
@@ -36,7 +47,39 @@ export function DataTable<T>({
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getRowId: (row, i) => getRowId(row) || String(i),
+    enableSorting,
+    columnResizeMode: "onChange",
+    enableColumnResizing: true,
+    defaultColumn: {
+      minSize: 40,
+      maxSize: 640,
+      size: 120,
+    },
   });
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !onNearEnd) return;
+
+    const onScroll = () => {
+      if (!hasMore || isLoadingMore) return;
+      const threshold = 320;
+      if (el.scrollHeight - el.scrollTop - el.clientHeight < threshold) {
+        onNearEnd();
+      }
+    };
+
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, [onNearEnd, hasMore, isLoadingMore, data.length]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !onNearEnd || !hasMore || isLoadingMore) return;
+    if (el.scrollHeight <= el.clientHeight + 8) {
+      onNearEnd();
+    }
+  }, [data.length, hasMore, isLoadingMore, onNearEnd]);
 
   if (data.length === 0) {
     return (
@@ -50,21 +93,54 @@ export function DataTable<T>({
   }
 
   return (
-    <div className="overflow-auto rounded border border-border bg-surface-1">
-      <table className="w-full border-collapse text-left text-[var(--text-table)]">
+    <div
+      ref={scrollRef}
+      className="flex min-h-0 flex-1 flex-col overflow-auto rounded border border-border bg-surface-1"
+    >
+      <table
+        className="border-collapse text-left text-[var(--text-table)]"
+        style={{
+          width: table.getCenterTotalSize(),
+          minWidth: "100%",
+          tableLayout: "fixed",
+        }}
+      >
         <thead className="sticky top-0 z-10 bg-surface-2 shadow-sm">
           {table.getHeaderGroups().map((hg) => (
             <tr key={hg.id} className="border-b border-border">
               {hg.headers.map((h) => (
                 <th
                   key={h.id}
-                  className="whitespace-nowrap px-[var(--cell-px)] py-[var(--cell-py)]"
+                  className="relative whitespace-nowrap px-[var(--cell-px)] py-[var(--cell-py)]"
                   scope="col"
-                  style={{ height: "var(--row-h)" }}
+                  style={{
+                    height: "var(--row-h)",
+                    width: h.getSize(),
+                    minWidth: h.getSize(),
+                    maxWidth: h.getSize(),
+                  }}
                 >
-                  {h.isPlaceholder
-                    ? null
-                    : flexRender(h.column.columnDef.header, h.getContext())}
+                  {h.isPlaceholder ? null : (
+                    <>
+                      <div className="overflow-hidden text-ellipsis pr-1">
+                        {flexRender(h.column.columnDef.header, h.getContext())}
+                      </div>
+                      {h.column.getCanResize() ? (
+                        <div
+                          role="separator"
+                          aria-orientation="vertical"
+                          aria-label={`Resize ${String(h.column.id)} column`}
+                          onMouseDown={h.getResizeHandler()}
+                          onTouchStart={h.getResizeHandler()}
+                          className={clsx(
+                            "absolute right-0 top-0 z-20 h-full w-1.5 touch-none select-none",
+                            "cursor-col-resize border-r border-transparent hover:border-accent/80",
+                            h.column.getIsResizing() && "border-accent bg-accent/20",
+                          )}
+                        />
+                      ) : null}
+                    </>
+                  )}
                 </th>
               ))}
             </tr>
@@ -101,7 +177,11 @@ export function DataTable<T>({
                 {row.getVisibleCells().map((cell) => (
                   <td
                     key={cell.id}
-                    className="whitespace-nowrap px-[var(--cell-px)] py-[var(--cell-py)] text-secondary"
+                    className="overflow-hidden text-ellipsis whitespace-nowrap px-[var(--cell-px)] py-[var(--cell-py)] text-secondary"
+                    style={{
+                      width: cell.column.getSize(),
+                      maxWidth: cell.column.getSize(),
+                    }}
                   >
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </td>
@@ -111,6 +191,14 @@ export function DataTable<T>({
           })}
         </tbody>
       </table>
+      {isLoadingMore ? (
+        <div
+          className="border-t border-border bg-surface-2 px-[var(--cell-px)] py-2 text-center text-[0.75rem] text-muted"
+          role="status"
+        >
+          Loading more…
+        </div>
+      ) : null}
     </div>
   );
 }
