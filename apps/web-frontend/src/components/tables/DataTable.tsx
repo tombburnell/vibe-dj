@@ -15,7 +15,7 @@ import {
   type MutableRefObject,
   type Ref,
 } from "react";
-import type { MouseEvent } from "react";
+import type { MouseEvent as ReactMouseEvent } from "react";
 
 type Props<T> = {
   data: T[];
@@ -23,9 +23,12 @@ type Props<T> = {
   getRowId: (row: T) => string;
   /** Single-selection highlight (library table). Ignored when `selectedIds` is set. */
   selectedId?: string | null;
-  /** Multi-selection highlight (source table). */
+  /**
+   * Multi-selection highlight (source / download tables). When set, rows use `user-select: none`
+   * and cells `user-select: text` so range selection does not drag-highlight text across rows.
+   */
   selectedIds?: string[];
-  onRowClick: (row: T, event?: MouseEvent<HTMLTableRowElement>) => void;
+  onRowClick: (row: T, event?: ReactMouseEvent<HTMLTableRowElement>) => void;
   emptyMessage?: string;
   /** When false, headers are not sortable (e.g. server-paginated library). */
   enableSorting?: boolean;
@@ -54,6 +57,9 @@ export function DataTable<T>({
   isLoadingMore = false,
   onDisplayRowOrder,
 }: Props<T>) {
+  /** Multi-select tables: avoid drag-selecting text across rows; cells stay `select-text`. */
+  const multiSelectCellText = selectedIds !== undefined;
+
   const [sorting, setSorting] = useState<SortingState>([]);
   const innerScrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -66,6 +72,18 @@ export function DataTable<T>({
       else (r as MutableRefObject<HTMLDivElement | null>).current = node;
     },
     [scrollContainerRef],
+  );
+
+  /** Shift/Cmd/Ctrl row selection must not extend a browser text selection across cells. */
+  const onRowMouseDownMulti = useCallback(
+    (e: ReactMouseEvent<HTMLTableRowElement>) => {
+      if (!multiSelectCellText) return;
+      if (e.shiftKey || e.metaKey || e.ctrlKey) {
+        e.preventDefault();
+        document.getSelection()?.removeAllRanges();
+      }
+    },
+    [multiSelectCellText],
   );
 
   const table = useReactTable({
@@ -194,6 +212,7 @@ export function DataTable<T>({
                 data-row-id={id}
                 className={clsx(
                   "cursor-pointer border-b border-[var(--color-row-divider)] transition-colors",
+                  multiSelectCellText && "select-none",
                   !selected && "hover:bg-[var(--color-row-hover)]",
                   selected && "bg-[var(--color-selection-bg)]",
                 )}
@@ -203,7 +222,18 @@ export function DataTable<T>({
                     ? "inset var(--selection-bar-width) 0 0 0 var(--color-selection-bar), inset calc(-1 * var(--selection-bar-width)) 0 0 0 var(--color-selection-bar)"
                     : undefined,
                 }}
-                onClick={(e) => onRowClick(row.original, e)}
+                onMouseDown={onRowMouseDownMulti}
+                onClick={(e) => {
+                  onRowClick(row.original, e);
+                  if (
+                    multiSelectCellText &&
+                    (e.shiftKey || e.metaKey || e.ctrlKey)
+                  ) {
+                    requestAnimationFrame(() =>
+                      document.getSelection()?.removeAllRanges(),
+                    );
+                  }
+                }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" || e.key === " ") {
                     e.preventDefault();
@@ -216,13 +246,25 @@ export function DataTable<T>({
                 {row.getVisibleCells().map((cell) => (
                   <td
                     key={cell.id}
-                    className="overflow-hidden text-ellipsis whitespace-nowrap px-[var(--cell-px)] py-[var(--cell-py)] text-secondary"
+                    className={clsx(
+                      "overflow-hidden px-[var(--cell-px)] py-0 text-secondary",
+                      multiSelectCellText && "select-text",
+                    )}
                     style={{
                       width: cell.column.getSize(),
                       maxWidth: cell.column.getSize(),
                     }}
                   >
-                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    {/*
+                      Row height is fixed (--row-h); padding lives inside this flex box so every
+                      cell (plain text, links, inline-flex) shares the same vertical centering.
+                    */}
+                    <div className="box-border flex min-h-[var(--row-h)] min-w-0 items-center overflow-hidden text-ellipsis whitespace-nowrap py-[var(--cell-py)]">
+                      {flexRender(
+                        cell.column.columnDef.cell,
+                        cell.getContext(),
+                      )}
+                    </div>
                   </td>
                 ))}
               </tr>

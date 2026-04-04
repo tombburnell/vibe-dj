@@ -16,7 +16,9 @@ export function buildLibraryTrackColumns(): ColumnDef<LibraryTrack>[] {
         <SortableHeader column={column}>Title</SortableHeader>
       ),
       cell: (ctx) => (
-        <span className="font-medium text-primary">{String(ctx.getValue())}</span>
+        <span className="text-[length:var(--text-src-triple)] font-medium text-primary">
+          {String(ctx.getValue())}
+        </span>
       ),
       sortUndefined: "last",
     },
@@ -27,6 +29,11 @@ export function buildLibraryTrackColumns(): ColumnDef<LibraryTrack>[] {
       maxSize: 560,
       header: ({ column }) => (
         <SortableHeader column={column}>Artist</SortableHeader>
+      ),
+      cell: (ctx) => (
+        <span className="text-[length:var(--text-src-triple)] text-secondary">
+          {String(ctx.getValue())}
+        </span>
       ),
       sortUndefined: "last",
     },
@@ -41,7 +48,7 @@ export function buildLibraryTrackColumns(): ColumnDef<LibraryTrack>[] {
         </SortableHeader>
       ),
       cell: (ctx) => (
-        <span className="tabular-nums text-secondary">
+        <span className="text-[length:var(--text-src-triple)] tabular-nums text-secondary">
           {formatDurationMs(ctx.getValue() as number | null)}
         </span>
       ),
@@ -60,7 +67,11 @@ export function buildLibraryTrackColumns(): ColumnDef<LibraryTrack>[] {
       ),
       cell: (ctx) => {
         const v = ctx.getValue() as number | null;
-        return <span className="tabular-nums">{v != null ? v.toFixed(1) : "—"}</span>;
+        return (
+          <span className="text-[length:var(--text-src-triple)] tabular-nums">
+            {v != null ? v.toFixed(1) : "—"}
+          </span>
+        );
       },
       sortUndefined: "last",
       sortingFn: "basic",
@@ -73,6 +84,14 @@ export function buildLibraryTrackColumns(): ColumnDef<LibraryTrack>[] {
       header: ({ column }) => (
         <SortableHeader column={column}>Key</SortableHeader>
       ),
+      cell: (ctx) => {
+        const v = ctx.getValue() as string | null | undefined;
+        return (
+          <span className="text-[length:var(--text-src-triple)]">
+            {v != null && v !== "" ? v : "—"}
+          </span>
+        );
+      },
       sortUndefined: "last",
     },
     {
@@ -83,6 +102,14 @@ export function buildLibraryTrackColumns(): ColumnDef<LibraryTrack>[] {
       header: ({ column }) => (
         <SortableHeader column={column}>Genre</SortableHeader>
       ),
+      cell: (ctx) => {
+        const v = ctx.getValue() as string | null | undefined;
+        return (
+          <span className="text-[length:var(--text-src-triple)]">
+            {v != null && v !== "" ? v : "—"}
+          </span>
+        );
+      },
       sortUndefined: "last",
     },
   ];

@@ -324,7 +324,7 @@ export function WorkspacePage() {
     }
     if (targets.length === 0) {
       showToast(
-        "No eligible rows (need a best match ≥ min; skip rows already Need or matched).",
+        "No eligible rows (need a best match ≥ min; skip rows already Missing or matched).",
         "info",
       );
       return;
@@ -346,7 +346,7 @@ export function WorkspacePage() {
     const ids = [...new Set(selectedSourceIds)].filter(Boolean).slice(0, 100);
     void withMatchActionForSources(ids, async () => {
       const { rejected_count: n } = await matchRejectBatch(ids);
-      showToast(`Marked ${n} track(s) as Need.`, "info");
+      showToast(`Marked ${n} track(s) as Missing.`, "info");
     });
   };
 
@@ -641,7 +641,7 @@ export function WorkspacePage() {
                     handleSourceRowClick(r, e);
                     setSelectedLibraryId(null);
                   }}
-                  emptyMessage='No Need tracks yet — in Sources, use "Need (no match)" on rows not in your library.'
+                  emptyMessage='No Missing tracks yet — in Sources, use "Missing" on rows not in your library.'
                 />
               ) : (
                 <DataTable<LibraryTrack>

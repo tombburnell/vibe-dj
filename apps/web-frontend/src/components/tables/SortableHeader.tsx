@@ -8,7 +8,11 @@ type Props<TData, TValue> = {
   title?: string;
 };
 
-/** Clickable header for TanStack Table client-side sort. */
+/**
+ * Column header for TanStack Table. Size and colour come from `index.css` tokens:
+ * `--table-header-font-size`, `--table-header-text`, `--table-header-text-hover`,
+ * `--table-header-sort-chevron` (see `@layer components` `.table-header-*`).
+ */
 export function SortableHeader<TData, TValue>({
   column,
   children,
@@ -17,7 +21,7 @@ export function SortableHeader<TData, TValue>({
 }: Props<TData, TValue>) {
   if (!column.getCanSort()) {
     return (
-      <span className={className} title={title}>
+      <span className={clsx("table-header-label", className)} title={title}>
         {children}
       </span>
     );
@@ -30,8 +34,8 @@ export function SortableHeader<TData, TValue>({
       type="button"
       title={title}
       className={clsx(
-        "inline-flex items-center gap-0.5 rounded font-medium text-secondary",
-        "hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent",
+        "table-header-sort-btn inline-flex items-center gap-0.5 rounded",
+        "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent",
         className,
       )}
       onClick={column.getToggleSortingHandler()}
@@ -40,7 +44,10 @@ export function SortableHeader<TData, TValue>({
       }
     >
       {children}
-      <span className="w-3 tabular-nums text-muted" aria-hidden>
+      <span
+        className="table-header-sort-chevron w-3 tabular-nums"
+        aria-hidden
+      >
         {sorted === "asc" ? "▲" : sorted === "desc" ? "▼" : ""}
       </span>
     </button>

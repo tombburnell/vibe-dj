@@ -8,14 +8,14 @@ type Props = {
 const keys: { key: keyof SourceMatchCategoryFilterState; label: string }[] = [
   { key: "picked", label: "Matched" },
   { key: "ignored", label: "Ignored" },
-  { key: "rejected", label: "Need" },
+  { key: "rejected", label: "Missing" },
   { key: "uncategorised", label: "Uncategorised" },
 ];
 
 export function SourceMatchCategoryFilter({ value, onChange }: Props) {
   return (
     <fieldset className="flex flex-wrap items-center gap-x-3 gap-y-1 border-0 p-0 text-[0.75rem] text-secondary">
-      <legend className="sr-only">Filter by Matched, Ignored, Need, or Uncategorised</legend>
+      <legend className="sr-only">Filter by Matched, Ignored, Missing, or Uncategorised</legend>
       {keys.map(({ key, label }) => (
         <label
           key={key}

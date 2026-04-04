@@ -3,6 +3,12 @@
 @tailwind utilities;
 
 @layer base {
+  /*
+   * Table column headers (SortableHeader): one place to change size + colour for every table.
+   * - --table-header-font-size: set per data-density (tracks body table text).
+   * - --table-header-text* / --table-header-sort-chevron: alias palette vars per data-theme.
+   *   (No separate *-dark / *-light names: the active theme block defines the values.)
+   */
   :root[data-theme="dark"] {
     --color-background: #0c0c0c;
     --color-surface-1: #141414;
@@ -17,6 +23,9 @@
     --color-selection-bg: rgba(34, 211, 238, 0.16);
     --color-selection-bar: #22d3ee;
     --selection-bar-width: 4px;
+    --table-header-text: var(--color-text-secondary);
+    --table-header-text-hover: var(--color-text-primary);
+    --table-header-sort-chevron: var(--color-text-muted);
   }
 
   :root[data-theme="light"] {
@@ -33,6 +42,9 @@
     --color-selection-bg: rgba(8, 145, 178, 0.12);
     --color-selection-bar: #0891b2;
     --selection-bar-width: 4px;
+    --table-header-text: var(--color-text-secondary);
+    --table-header-text-hover: var(--color-text-primary);
+    --table-header-sort-chevron: var(--color-text-muted);
   }
 
   :root[data-density="comfortable"] {
@@ -42,6 +54,7 @@
     /* +10% vs former baseline 0.8125rem */
     --text-table: 0.89375rem;
     --text-src-triple: var(--text-table);
+    --table-header-font-size: var(--text-src-triple);
   }
 
   :root[data-density="compact"] {
@@ -51,6 +64,7 @@
     /* Former “comfortable” table text size */
     --text-table: 0.8125rem;
     --text-src-triple: var(--text-table);
+    --table-header-font-size: var(--text-src-triple);
   }
 
   :root[data-density="ultra-compact"] {
@@ -60,11 +74,35 @@
     /* Former “compact” table text size */
     --text-table: 0.75rem;
     --text-src-triple: calc(0.8125rem * 0.8);
+    --table-header-font-size: var(--text-src-triple);
   }
 
   body {
     @apply bg-background text-primary antialiased;
     font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  }
+}
+
+@layer components {
+  /** All DataTable column headers (Sources, Download, Library) — tokens in :root above. */
+  .table-header-label {
+    font-size: var(--table-header-font-size);
+    font-weight: 500;
+    color: var(--table-header-text);
+  }
+
+  .table-header-sort-btn {
+    font-size: var(--table-header-font-size);
+    font-weight: 500;
+    color: var(--table-header-text);
+  }
+
+  .table-header-sort-btn:hover {
+    color: var(--table-header-text-hover);
+  }
+
+  .table-header-sort-chevron {
+    color: var(--table-header-sort-chevron);
   }
 }
 

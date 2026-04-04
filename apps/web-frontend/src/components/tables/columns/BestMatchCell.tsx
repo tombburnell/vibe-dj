@@ -59,8 +59,8 @@ export function BestMatchCell({ row }: { row: Row<SourceTrack> }) {
   if (rejected) {
     return (
       <span
-        className="inline-flex max-w-full items-center gap-1.5 text-[length:var(--text-src-triple,0.8125rem)] leading-snug text-muted"
-        title="Need — acquire / not in library"
+        className="inline-flex min-w-0 max-w-full items-center gap-1.5 text-[length:var(--text-src-triple,0.8125rem)] leading-none text-muted"
+        title="Missing — not in library"
       >
         <svg
           className="size-[1.1em] shrink-0 opacity-90"
@@ -77,7 +77,7 @@ export function BestMatchCell({ row }: { row: Row<SourceTrack> }) {
           <path d="m7 10 5 5 5-5" />
           <path d="M5 19h14" />
         </svg>
-        <span className="min-w-0 font-medium">Need (no library match)</span>
+        <span className="min-w-0 font-medium">Missing</span>
       </span>
     );
   }

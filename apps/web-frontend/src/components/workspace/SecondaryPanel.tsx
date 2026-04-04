@@ -7,6 +7,13 @@ import { formatDurationMs } from "@/lib/formatDuration";
 
 import type { MainView } from "./MainViewTabs";
 
+/** Same token as DataTable body cells / source–download columns. */
+const PANEL_TEXT_CELL = "text-[length:var(--text-src-triple)]";
+/** Same token as SortableHeader (see `index.css` `--table-header-font-size`). */
+const PANEL_TEXT_COL_HEADER = "text-[length:var(--table-header-font-size)]";
+/** Dense meta lines (e.g. duration row); scales with `--text-src-triple`. */
+const PANEL_TEXT_META = "text-[length:calc(var(--text-src-triple)*0.85)]";
+
 /** One-line label for a purchase/search link (not the raw URL). */
 function linkListLabel(
   title: string | null | undefined,
@@ -125,7 +132,7 @@ export function SecondaryPanel({
     if (sourceSelectionCount === 0) {
       return (
         <PanelChrome title="Links">
-          <p className="text-[var(--text-table)] text-muted">
+          <p className={`${PANEL_TEXT_CELL} text-muted`}>
             Select a Download row to see the best link and other URLs. Toolbar: Find links runs a
             throttled search for every track in the queue ({downloadQueueCount}).
           </p>
@@ -137,10 +144,10 @@ export function SecondaryPanel({
       const ignoreable = selectedSourcesBulk.filter((s) => s.on_wishlist);
       return (
         <PanelChrome title="Links">
-          <p className="mb-2 text-[0.7rem] text-muted">
+          <p className={`mb-2 ${PANEL_TEXT_CELL} text-muted`}>
             {sourceSelectionCount} tracks selected
           </p>
-          <p className="mb-3 text-[0.7rem] text-[var(--text-table)] text-secondary">
+          <p className={`mb-3 ${PANEL_TEXT_CELL} text-secondary`}>
             Re-search selected forces a new web search for each selected row (respects delay between
             requests).
           </p>
@@ -148,7 +155,7 @@ export function SecondaryPanel({
             <button
               type="button"
               disabled={findLinksBusy}
-              className="rounded border border-border/80 bg-surface-2 px-2 py-1.5 text-left text-[0.75rem] text-primary hover:bg-surface-1 disabled:opacity-50"
+              className={`rounded border border-border/80 bg-surface-2 px-2 py-1.5 text-left ${PANEL_TEXT_CELL} text-primary hover:bg-surface-1 disabled:opacity-50`}
               onClick={() => onFindLinksDisplayed()}
             >
               Find links (full queue)
@@ -156,7 +163,7 @@ export function SecondaryPanel({
             <button
               type="button"
               disabled={findLinksBusy}
-              className="rounded border border-border/80 bg-surface-2 px-2 py-1.5 text-left text-[0.75rem] text-primary hover:bg-surface-1 disabled:opacity-50"
+              className={`rounded border border-border/80 bg-surface-2 px-2 py-1.5 text-left ${PANEL_TEXT_CELL} text-primary hover:bg-surface-1 disabled:opacity-50`}
               onClick={() => onReSearchSelectedDownloads()}
             >
               Re-search selected
@@ -164,7 +171,7 @@ export function SecondaryPanel({
             <button
               type="button"
               disabled={wishlistBusy || ignoreable.length === 0}
-              className="rounded border border-border/80 bg-surface-2 px-2 py-1.5 text-left text-[0.75rem] text-primary hover:bg-surface-1 disabled:opacity-50"
+              className={`rounded border border-border/80 bg-surface-2 px-2 py-1.5 text-left ${PANEL_TEXT_CELL} text-primary hover:bg-surface-1 disabled:opacity-50`}
               onClick={() =>
                 onWishlistSources(
                   ignoreable.map((s) => s.id),
@@ -187,7 +194,7 @@ export function SecondaryPanel({
     if (!selectedSource) {
       return (
         <PanelChrome title="Links">
-          <p className="text-[var(--text-table)] text-muted">Loading selection…</p>
+          <p className={`${PANEL_TEXT_CELL} text-muted`}>Loading selection…</p>
         </PanelChrome>
       );
     }
@@ -198,14 +205,18 @@ export function SecondaryPanel({
 
     return (
       <PanelChrome title="Links">
-        <p className="mb-2 text-[0.7rem] text-muted">
+        <p className={`mb-2 ${PANEL_TEXT_CELL} text-muted`}>
           {s.artist} — {s.title}
         </p>
-        <div className="mb-3 space-y-2 rounded border border-border/70 bg-surface-2/50 px-2 py-2 text-[0.7rem] text-[var(--text-table)]">
+        <div
+          className={`mb-3 space-y-2 rounded border border-border/70 bg-surface-2/50 px-2 py-2 ${PANEL_TEXT_CELL}`}
+        >
           <div className="font-medium text-secondary">Best link</div>
           {s.amazon_url ? (
             <div className="space-y-1">
-              <div className="grid grid-cols-[minmax(0,1fr)_2.75rem_auto] items-center gap-x-2 text-[0.55rem] font-medium uppercase tracking-wide text-muted">
+              <div
+                className={`grid grid-cols-[minmax(0,1fr)_2.75rem_auto] items-center gap-x-2 ${PANEL_TEXT_COL_HEADER} font-medium uppercase tracking-wide text-muted`}
+              >
                 <span>Title</span>
                 <span className="text-right">Score</span>
                 <span className="sr-only">Copy</span>
@@ -221,7 +232,7 @@ export function SecondaryPanel({
                   {s.amazon_link_title?.trim() ||
                     linkListLabel(null, null, "Amazon Music")}
                 </a>
-                <span className="shrink-0 text-right tabular-nums text-[0.65rem] text-secondary">
+                <span className={`shrink-0 text-right tabular-nums ${PANEL_TEXT_CELL} text-secondary`}>
                   {s.amazon_link_match_score != null
                     ? `${Math.round(s.amazon_link_match_score)}%`
                     : "—"}
@@ -238,7 +249,7 @@ export function SecondaryPanel({
             <p className="tabular-nums text-muted">Price: {s.amazon_price}</p>
           ) : null}
           {s.amazon_search_url ? (
-            <div className="flex items-start gap-2 text-[0.65rem]">
+            <div className={`flex items-start gap-2 ${PANEL_TEXT_CELL}`}>
               <a
                 href={s.amazon_search_url}
                 target="_blank"
@@ -251,11 +262,13 @@ export function SecondaryPanel({
             </div>
           ) : null}
         </div>
-        <div className="text-[0.65rem] font-medium uppercase tracking-wide text-secondary">
+        <div
+          className={`${PANEL_TEXT_COL_HEADER} font-medium uppercase tracking-wide text-secondary`}
+        >
           Other links
         </div>
         {candidates.length === 0 ? (
-          <p className="mt-1 text-[var(--text-table)] text-muted">
+          <p className={`mt-1 ${PANEL_TEXT_CELL} text-muted`}>
             {searched ? "No alternate URLs." : "Run Find links to populate."}
           </p>
         ) : (
@@ -263,7 +276,7 @@ export function SecondaryPanel({
             {candidates.map((c, i) => (
               <li
                 key={`${c.url}-${i}`}
-                className="rounded-md border-0 bg-neutral-300/80 px-2 py-1.5 text-[0.6rem] leading-snug dark:bg-neutral-800/85"
+                className={`rounded-md border-0 bg-neutral-300/80 px-2 py-1.5 ${PANEL_TEXT_CELL} leading-snug dark:bg-neutral-800/85`}
               >
                 <div className="grid grid-cols-[minmax(0,1fr)_2.75rem_auto] items-center gap-x-2">
                   <a
@@ -292,7 +305,7 @@ export function SecondaryPanel({
             <button
               type="button"
               disabled={wishlistBusy}
-              className="rounded border border-border/80 bg-surface-1 px-2 py-0.5 text-[0.65rem] text-primary hover:bg-surface-2 disabled:opacity-50"
+              className={`rounded border border-border/80 bg-surface-1 px-2 py-0.5 ${PANEL_TEXT_CELL} text-primary hover:bg-surface-2 disabled:opacity-50`}
               title="Hide from Sources / Download — not deleting the track"
               onClick={() => onWishlistSources([s.id], false)}
             >
@@ -302,7 +315,7 @@ export function SecondaryPanel({
             <button
               type="button"
               disabled={wishlistBusy}
-              className="rounded border border-border/80 bg-surface-1 px-2 py-0.5 text-[0.65rem] text-primary hover:bg-surface-2 disabled:opacity-50"
+              className={`rounded border border-border/80 bg-surface-1 px-2 py-0.5 ${PANEL_TEXT_CELL} text-primary hover:bg-surface-2 disabled:opacity-50`}
               onClick={() => onWishlistSources([s.id], true)}
             >
               Restore to list
@@ -317,7 +330,7 @@ export function SecondaryPanel({
     if (sourceSelectionCount === 0) {
       return (
         <PanelChrome title="Matches">
-          <p className="text-[var(--text-table)] text-muted">
+          <p className={`${PANEL_TEXT_CELL} text-muted`}>
             Select source row(s). Use Ctrl/Cmd+click to add rows; Shift+click for a range. One row:
             current match and candidates. Several rows: bulk actions.
           </p>
@@ -338,18 +351,18 @@ export function SecondaryPanel({
       const restorableBulk = selectedSourcesBulk.filter((s) => !s.on_wishlist);
       return (
         <PanelChrome title="Matches">
-          <p className="mb-2 text-[0.7rem] text-muted">
+          <p className={`mb-2 ${PANEL_TEXT_CELL} text-muted`}>
             {sourceSelectionCount} tracks selected
           </p>
-          <p className="mb-3 text-[0.7rem] text-[var(--text-table)] text-secondary">
+          <p className={`mb-3 ${PANEL_TEXT_CELL} text-secondary`}>
             Match applies each row&apos;s current best library row (from the table). Rows without a
-            candidate, marked Need, or already matched are skipped.
+            candidate, marked Missing, or already matched are skipped.
           </p>
           <div className="flex flex-col gap-2">
             <button
               type="button"
               disabled={matchActionBusy || pickable.length === 0}
-              className="rounded border border-border/80 bg-surface-2 px-2 py-1.5 text-left text-[0.75rem] text-primary hover:bg-surface-1 disabled:opacity-50"
+              className={`rounded border border-border/80 bg-surface-2 px-2 py-1.5 text-left ${PANEL_TEXT_CELL} text-primary hover:bg-surface-1 disabled:opacity-50`}
               onClick={() => void onPickSelectedMatches()}
             >
               Match selected
@@ -360,15 +373,15 @@ export function SecondaryPanel({
             <button
               type="button"
               disabled={matchActionBusy}
-              className="rounded border border-border/80 bg-surface-2 px-2 py-1.5 text-left text-[0.75rem] text-primary hover:bg-surface-1 disabled:opacity-50"
+              className={`rounded border border-border/80 bg-surface-2 px-2 py-1.5 text-left ${PANEL_TEXT_CELL} text-primary hover:bg-surface-1 disabled:opacity-50`}
               onClick={() => void onRejectSelectedMatches()}
             >
-              Mark selected as Need
+              Mark selected as Missing
             </button>
             <button
               type="button"
               disabled={wishlistBusy || ignoreableBulk.length === 0}
-              className="rounded border border-border/80 bg-surface-2 px-2 py-1.5 text-left text-[0.75rem] text-primary hover:bg-surface-1 disabled:opacity-50"
+              className={`rounded border border-border/80 bg-surface-2 px-2 py-1.5 text-left ${PANEL_TEXT_CELL} text-primary hover:bg-surface-1 disabled:opacity-50`}
               onClick={() =>
                 onWishlistSources(
                   ignoreableBulk.map((s) => s.id),
@@ -386,7 +399,7 @@ export function SecondaryPanel({
             <button
               type="button"
               disabled={wishlistBusy || restorableBulk.length === 0}
-              className="rounded border border-border/80 bg-surface-2 px-2 py-1.5 text-left text-[0.75rem] text-primary hover:bg-surface-1 disabled:opacity-50"
+              className={`rounded border border-border/80 bg-surface-2 px-2 py-1.5 text-left ${PANEL_TEXT_CELL} text-primary hover:bg-surface-1 disabled:opacity-50`}
               onClick={() =>
                 onWishlistSources(
                   restorableBulk.map((s) => s.id),
@@ -409,7 +422,7 @@ export function SecondaryPanel({
     if (!selectedSource) {
       return (
         <PanelChrome title="Matches">
-          <p className="text-[var(--text-table)] text-muted">Loading selection…</p>
+          <p className={`${PANEL_TEXT_CELL} text-muted`}>Loading selection…</p>
         </PanelChrome>
       );
     }
@@ -430,7 +443,7 @@ export function SecondaryPanel({
       topId != null &&
       topScore != null;
     const topSectionHeading = rejected
-      ? "Need"
+      ? "Missing"
       : belowMin
         ? "Best match"
         : !hasTop
@@ -443,16 +456,16 @@ export function SecondaryPanel({
 
     return (
       <PanelChrome title="Matches">
-        <p className="mb-2 text-[0.7rem] text-muted">
+        <p className={`mb-2 ${PANEL_TEXT_CELL} text-muted`}>
           {selectedSource.artist} — {selectedSource.title}
         </p>
 
-        <div className="mb-3 space-y-2 rounded border border-border/70 bg-surface-2/50 px-2 py-2 text-[0.7rem] text-[var(--text-table)]">
+        <div
+          className={`mb-3 space-y-2 rounded border border-border/70 bg-surface-2/50 px-2 py-2 ${PANEL_TEXT_CELL}`}
+        >
           <div className="font-medium text-secondary">{topSectionHeading}</div>
-          {rejected ? (
-            <p className="text-muted">Need — not in library for this snapshot scope.</p>
-          ) : belowMin ? (
-            <p className="text-[0.55rem] leading-tight text-muted">
+          {rejected ? null : belowMin ? (
+            <p className={`${PANEL_TEXT_META} text-muted`}>
               Minimum score not met
             </p>
           ) : hasTop ? (
@@ -484,7 +497,7 @@ export function SecondaryPanel({
                   <button
                     type="button"
                     disabled={matchActionBusy}
-                    className="rounded border border-border/80 bg-surface-1 px-2 py-0.5 text-[0.65rem] text-primary hover:bg-surface-2 disabled:opacity-50"
+                    className={`rounded border border-border/80 bg-surface-1 px-2 py-0.5 ${PANEL_TEXT_CELL} text-primary hover:bg-surface-2 disabled:opacity-50`}
                     onClick={() => void onPickTopMatch()}
                   >
                     Match
@@ -493,27 +506,27 @@ export function SecondaryPanel({
                 <button
                   type="button"
                   disabled={matchActionBusy}
-                  className="rounded border border-border/80 bg-surface-1 px-2 py-0.5 text-[0.65rem] text-primary hover:bg-surface-2 disabled:opacity-50"
+                  className={`rounded border border-border/80 bg-surface-1 px-2 py-0.5 ${PANEL_TEXT_CELL} text-primary hover:bg-surface-2 disabled:opacity-50`}
                   onClick={() => void onRejectNoMatch()}
                 >
-                  Need (no match)
+                  Missing
                 </button>
               </>
             ) : (
               <button
                 type="button"
                 disabled={matchActionBusy}
-                className="rounded border border-border/80 bg-surface-1 px-2 py-0.5 text-[0.65rem] text-primary hover:bg-surface-2 disabled:opacity-50"
+                className={`rounded border border-border/80 bg-surface-1 px-2 py-0.5 ${PANEL_TEXT_CELL} text-primary hover:bg-surface-2 disabled:opacity-50`}
                 onClick={() => void onUndoReject()}
               >
-                Undo Need
+                Undo Missing
               </button>
             )}
             {picked ? (
               <button
                 type="button"
                 disabled={matchActionBusy}
-                className="rounded border border-border/80 bg-surface-1 px-2 py-0.5 text-[0.65rem] text-primary hover:bg-surface-2 disabled:opacity-50"
+                className={`rounded border border-border/80 bg-surface-1 px-2 py-0.5 ${PANEL_TEXT_CELL} text-primary hover:bg-surface-2 disabled:opacity-50`}
                 onClick={() => void onUndoPick()}
               >
                 Undo match
@@ -523,7 +536,7 @@ export function SecondaryPanel({
               <button
                 type="button"
                 disabled={matchActionBusy || wishlistBusy}
-                className="rounded border border-border/80 bg-surface-1 px-2 py-0.5 text-[0.65rem] text-primary hover:bg-surface-2 disabled:opacity-50"
+                className={`rounded border border-border/80 bg-surface-1 px-2 py-0.5 ${PANEL_TEXT_CELL} text-primary hover:bg-surface-2 disabled:opacity-50`}
                 title="Hide from Sources / Download — not deleting the track"
                 onClick={() => onWishlistSources([selectedSource.id], false)}
               >
@@ -533,7 +546,7 @@ export function SecondaryPanel({
               <button
                 type="button"
                 disabled={wishlistBusy}
-                className="rounded border border-border/80 bg-surface-1 px-2 py-0.5 text-[0.65rem] text-primary hover:bg-surface-2 disabled:opacity-50"
+                className={`rounded border border-border/80 bg-surface-1 px-2 py-0.5 ${PANEL_TEXT_CELL} text-primary hover:bg-surface-2 disabled:opacity-50`}
                 onClick={() => onWishlistSources([selectedSource.id], true)}
               >
                 Restore to list
@@ -542,15 +555,17 @@ export function SecondaryPanel({
           </div>
         </div>
 
-        <div className="text-[0.65rem] font-medium uppercase tracking-wide text-secondary">
+        <div
+          className={`${PANEL_TEXT_COL_HEADER} font-medium uppercase tracking-wide text-secondary`}
+        >
           Candidates
         </div>
         {candidatesError ? (
-          <p className="mt-1 text-[var(--text-table)] text-red-400">{candidatesError.message}</p>
+          <p className={`mt-1 ${PANEL_TEXT_CELL} text-red-400`}>{candidatesError.message}</p>
         ) : candidatesLoading ? (
-          <p className="mt-1 text-[var(--text-table)] text-muted">Loading candidates…</p>
+          <p className={`mt-1 ${PANEL_TEXT_CELL} text-muted`}>Loading candidates…</p>
         ) : candidatesVisible.length === 0 ? (
-          <p className="mt-1 text-[var(--text-table)] text-muted">No candidates for this source.</p>
+          <p className={`mt-1 ${PANEL_TEXT_CELL} text-muted`}>No candidates for this source.</p>
         ) : (
           <ul className="mt-1 space-y-2">
             {candidatesVisible.map((c) => {
@@ -560,7 +575,7 @@ export function SecondaryPanel({
               return (
                 <li
                   key={c.id}
-                  className={`rounded-md border-0 px-2 py-1.5 text-[0.6rem] leading-snug ${
+                  className={`rounded-md border-0 px-2 py-1.5 ${PANEL_TEXT_CELL} leading-snug ${
                     isCurrent
                       ? "bg-emerald-950/25 ring-1 ring-emerald-600/35 dark:bg-emerald-950/20"
                       : "bg-neutral-300/80 dark:bg-neutral-800/85"
@@ -588,20 +603,20 @@ export function SecondaryPanel({
                           {Math.round(artistS * 100)}%
                         </span>
                       </div>
-                      <div className="mt-1 tabular-nums text-[0.52rem] text-muted">
+                      <div className={`mt-1 tabular-nums ${PANEL_TEXT_META} text-muted`}>
                         {formatDurationMs(c.duration_ms)} ·{" "}
                         {c.bpm != null ? `${c.bpm} BPM` : "—"} · {c.musical_key ?? "—"}
                       </div>
                       <button
                         type="button"
                         disabled={matchActionBusy || rejected}
-                        className="mt-1 rounded border border-border/50 bg-surface-1 px-1.5 py-0.5 text-[0.58rem] text-primary hover:bg-surface-2 disabled:opacity-50 dark:bg-surface-2/80"
+                        className={`mt-1 rounded border border-border/50 bg-surface-1 px-1.5 py-0.5 ${PANEL_TEXT_CELL} text-primary hover:bg-surface-2 disabled:opacity-50 dark:bg-surface-2/80`}
                         onClick={() => void onPickCandidate(c)}
                       >
                         Match
                       </button>
                     </div>
-                    <div className="shrink-0 self-start tabular-nums text-[0.68rem] font-semibold text-primary">
+                    <div className={`shrink-0 self-start tabular-nums ${PANEL_TEXT_CELL} font-semibold text-primary`}>
                       {Math.round(c.match_score * 100)}%
                     </div>
                   </div>
@@ -617,7 +632,7 @@ export function SecondaryPanel({
   if (!selectedLibrary) {
     return (
       <PanelChrome title="Details">
-        <p className="text-[var(--text-table)] text-muted">
+        <p className={`${PANEL_TEXT_CELL} text-muted`}>
           Select a library row for path and metadata.
         </p>
       </PanelChrome>
@@ -626,10 +641,10 @@ export function SecondaryPanel({
 
   return (
     <PanelChrome title="Library file">
-      <dl className="space-y-2 text-[var(--text-table)]">
+      <dl className={`space-y-2 ${PANEL_TEXT_CELL}`}>
         <div>
           <dt className="text-muted">Path</dt>
-          <dd className="break-all font-mono text-[0.7rem] text-secondary">
+          <dd className={`break-all font-mono ${PANEL_TEXT_CELL} text-secondary`}>
             {selectedLibrary.file_path}
           </dd>
         </div>
@@ -650,7 +665,9 @@ function PanelChrome({ title, children }: { title: string; children: React.React
       className="flex h-full min-h-0 flex-col rounded border border-border bg-surface-1"
       aria-label={title}
     >
-      <header className="border-b border-border bg-surface-2 px-2 py-1.5 text-[0.7rem] font-semibold uppercase tracking-wide text-secondary">
+      <header
+        className={`border-b border-border bg-surface-2 px-2 py-1.5 ${PANEL_TEXT_COL_HEADER} font-semibold uppercase tracking-wide text-secondary`}
+      >
         {title}
       </header>
       <div className="min-h-0 flex-1 overflow-auto p-2">{children}</div>

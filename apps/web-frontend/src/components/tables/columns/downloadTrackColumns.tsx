@@ -22,6 +22,8 @@ function BestLinkCell({ row }: { row: { original: SourceTrack } }) {
   const label =
     (s.amazon_link_title?.trim() || (url ? "Amazon Music" : "")) || "";
   const tooltip = s.amazon_link_title?.trim() || url || "";
+  const linkClass =
+    "min-w-0 max-w-full truncate text-[length:var(--text-src-triple)] leading-none text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent";
   if (url) {
     return (
       <a
@@ -29,7 +31,7 @@ function BestLinkCell({ row }: { row: { original: SourceTrack } }) {
         target="_blank"
         rel="noopener noreferrer"
         title={tooltip}
-        className="block max-w-full truncate text-[length:var(--text-src-triple)] text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
+        className={`block ${linkClass}`}
       >
         {label}
       </a>
@@ -37,10 +39,16 @@ function BestLinkCell({ row }: { row: { original: SourceTrack } }) {
   }
   if (searched) {
     return (
-      <span className="text-[length:var(--text-src-triple)] text-muted">No link found</span>
+      <span className="text-[length:var(--text-src-triple)] leading-none text-muted">
+        No link found
+      </span>
     );
   }
-  return <span className="text-[length:var(--text-src-triple)] text-muted">—</span>;
+  return (
+    <span className="text-[length:var(--text-src-triple)] leading-none text-muted">
+      —
+    </span>
+  );
 }
 
 export function buildDownloadTrackColumns(): ColumnDef<SourceTrack>[] {
@@ -50,14 +58,7 @@ export function buildDownloadTrackColumns(): ColumnDef<SourceTrack>[] {
       size: 108,
       minSize: 72,
       maxSize: 560,
-      header: ({ column }) => (
-        <SortableHeader
-          column={column}
-          className="text-[length:var(--text-src-triple)]"
-        >
-          Title
-        </SortableHeader>
-      ),
+      header: ({ column }) => <SortableHeader column={column}>Title</SortableHeader>,
       cell: (ctx) => (
         <span className="text-[length:var(--text-src-triple)] font-medium text-primary">
           {String(ctx.getValue())}
@@ -70,14 +71,7 @@ export function buildDownloadTrackColumns(): ColumnDef<SourceTrack>[] {
       size: 72,
       minSize: 48,
       maxSize: 560,
-      header: ({ column }) => (
-        <SortableHeader
-          column={column}
-          className="text-[length:var(--text-src-triple)]"
-        >
-          Artist
-        </SortableHeader>
-      ),
+      header: ({ column }) => <SortableHeader column={column}>Artist</SortableHeader>,
       cell: (ctx) => (
         <span className="text-[length:var(--text-src-triple)] text-secondary">
           {String(ctx.getValue())}
@@ -91,10 +85,7 @@ export function buildDownloadTrackColumns(): ColumnDef<SourceTrack>[] {
       minSize: 44,
       maxSize: 120,
       header: ({ column }) => (
-        <SortableHeader
-          column={column}
-          className="text-[length:var(--text-src-triple)]"
-        >
+        <SortableHeader column={column}>
           <span className="tabular-nums">Time</span>
         </SortableHeader>
       ),
@@ -112,7 +103,7 @@ export function buildDownloadTrackColumns(): ColumnDef<SourceTrack>[] {
       size: 120,
       minSize: 64,
       maxSize: 400,
-      header: ({ column }) => <SortableHeader column={column}>Best link</SortableHeader>,
+      header: ({ column }) => <SortableHeader column={column}>Link</SortableHeader>,
       cell: ({ row }) => <BestLinkCell row={row} />,
       sortUndefined: "last",
     },
@@ -123,10 +114,7 @@ export function buildDownloadTrackColumns(): ColumnDef<SourceTrack>[] {
       minSize: 36,
       maxSize: 72,
       header: ({ column }) => (
-        <SortableHeader
-          column={column}
-          className="text-[length:var(--text-src-triple)] tabular-nums"
-        >
+        <SortableHeader column={column} className="tabular-nums">
           Score
         </SortableHeader>
       ),

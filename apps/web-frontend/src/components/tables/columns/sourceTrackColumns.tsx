@@ -25,14 +25,7 @@ export function buildSourceTrackColumns(): ColumnDef<SourceTrack>[] {
       size: 108,
       minSize: 72,
       maxSize: 560,
-      header: ({ column }) => (
-        <SortableHeader
-          column={column}
-          className="text-[length:var(--text-src-triple)]"
-        >
-          Title
-        </SortableHeader>
-      ),
+      header: ({ column }) => <SortableHeader column={column}>Title</SortableHeader>,
       cell: (ctx) => (
         <span className="text-[length:var(--text-src-triple)] font-medium text-primary">
           {String(ctx.getValue())}
@@ -45,14 +38,7 @@ export function buildSourceTrackColumns(): ColumnDef<SourceTrack>[] {
       size: 72,
       minSize: 48,
       maxSize: 560,
-      header: ({ column }) => (
-        <SortableHeader
-          column={column}
-          className="text-[length:var(--text-src-triple)]"
-        >
-          Artist
-        </SortableHeader>
-      ),
+      header: ({ column }) => <SortableHeader column={column}>Artist</SortableHeader>,
       cell: (ctx) => (
         <span className="text-[length:var(--text-src-triple)] text-secondary">
           {String(ctx.getValue())}
@@ -66,10 +52,7 @@ export function buildSourceTrackColumns(): ColumnDef<SourceTrack>[] {
       minSize: 44,
       maxSize: 120,
       header: ({ column }) => (
-        <SortableHeader
-          column={column}
-          className="text-[length:var(--text-src-triple)]"
-        >
+        <SortableHeader column={column}>
           <span className="tabular-nums">Time</span>
         </SortableHeader>
       ),
@@ -113,7 +96,7 @@ export function buildSourceTrackColumns(): ColumnDef<SourceTrack>[] {
       header: ({ column }) => (
         <SortableHeader
           column={column}
-          className="text-[length:var(--text-src-triple)] tabular-nums"
+          className="tabular-nums"
           title="Best match score"
         >
           Score
