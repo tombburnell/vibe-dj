@@ -218,6 +218,8 @@ async def list_match_candidates(
         LibraryCandidateOut(
             **_lt_core_out(lt).model_dump(),
             match_score=score,
+            title_match_score=title_s,
+            artist_match_score=artist_s,
         )
-        for lt, score in pairs
+        for lt, score, title_s, artist_s in pairs
     ]

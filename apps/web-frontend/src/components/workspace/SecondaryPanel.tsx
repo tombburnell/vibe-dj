@@ -5,6 +5,20 @@ import { formatDurationMs } from "@/lib/formatDuration";
 
 import type { MainView } from "./MainViewTabs";
 
+/** 0–1 title/artist fuzzy quality from API; lower → orange / red on the line. */
+function candidateComponentClass(
+  score: number,
+  role: "title" | "artist",
+): string {
+  if (score >= 0.72) {
+    return role === "title" ? "font-medium text-primary" : "text-secondary";
+  }
+  if (score >= 0.45) {
+    return role === "title" ? "font-medium text-orange-500" : "text-orange-500";
+  }
+  return role === "title" ? "font-medium text-red-500" : "text-red-500";
+}
+
 type Props = {
   mainView: MainView;
   /** Single-row focus (exactly one source selected). */
@@ -226,33 +240,59 @@ export function SecondaryPanel({
         ) : candidatesVisible.length === 0 ? (
           <p className="mt-1 text-[var(--text-table)] text-muted">No candidates for this source.</p>
         ) : (
-          <ul className="mt-1 space-y-1.5 text-[var(--text-table)]">
+          <ul className="mt-1 space-y-2">
             {candidatesVisible.map((c) => {
               const isCurrent = topId != null && c.id === topId;
+              const titleS = c.title_match_score;
+              const artistS = c.artist_match_score;
               return (
                 <li
                   key={c.id}
-                  className={`rounded border px-2 py-1 ${
+                  className={`rounded-md border-0 px-2 py-1.5 text-[0.6rem] leading-snug ${
                     isCurrent
-                      ? "border-emerald-600/50 bg-emerald-950/20"
-                      : "border-border/70 bg-surface-2/40"
+                      ? "bg-emerald-950/25 ring-1 ring-emerald-600/35 dark:bg-emerald-950/20"
+                      : "bg-neutral-300/80 dark:bg-neutral-800/85"
                   }`}
                 >
-                  <div className="font-medium text-primary">{c.title}</div>
-                  <div className="text-secondary">{c.artist}</div>
-                  <div className="tabular-nums text-muted">
-                    score {(c.match_score * 100).toFixed(0)}% ·{" "}
-                    {formatDurationMs(c.duration_ms)} · {c.bpm != null ? `${c.bpm} BPM` : "—"} ·{" "}
-                    {c.musical_key ?? "—"}
+                  <div className="flex gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex min-w-0 flex-wrap items-baseline gap-x-1 gap-y-0">
+                        <span
+                          className={`min-w-0 flex-1 truncate ${candidateComponentClass(titleS, "title")}`}
+                        >
+                          {c.title}
+                        </span>
+                        <span className="shrink-0 italic tabular-nums text-muted">
+                          {Math.round(titleS * 100)}%
+                        </span>
+                      </div>
+                      <div className="mt-px flex min-w-0 flex-wrap items-baseline gap-x-1 gap-y-0">
+                        <span
+                          className={`min-w-0 flex-1 truncate ${candidateComponentClass(artistS, "artist")}`}
+                        >
+                          {c.artist}
+                        </span>
+                        <span className="shrink-0 italic tabular-nums text-muted">
+                          {Math.round(artistS * 100)}%
+                        </span>
+                      </div>
+                      <div className="mt-1 tabular-nums text-[0.52rem] text-muted">
+                        {formatDurationMs(c.duration_ms)} ·{" "}
+                        {c.bpm != null ? `${c.bpm} BPM` : "—"} · {c.musical_key ?? "—"}
+                      </div>
+                      <button
+                        type="button"
+                        disabled={matchActionBusy || rejected}
+                        className="mt-1 rounded border border-border/50 bg-surface-1 px-1.5 py-0.5 text-[0.58rem] text-primary hover:bg-surface-2 disabled:opacity-50 dark:bg-surface-2/80"
+                        onClick={() => void onPickCandidate(c)}
+                      >
+                        Pick
+                      </button>
+                    </div>
+                    <div className="shrink-0 self-start tabular-nums text-[0.68rem] font-semibold text-primary">
+                      {Math.round(c.match_score * 100)}%
+                    </div>
                   </div>
-                  <button
-                    type="button"
-                    disabled={matchActionBusy || rejected}
-                    className="mt-1 rounded border border-border/80 bg-surface-1 px-2 py-0.5 text-[0.65rem] text-primary hover:bg-surface-2 disabled:opacity-50"
-                    onClick={() => void onPickCandidate(c)}
-                  >
-                    Pick
-                  </button>
                 </li>
               );
             })}

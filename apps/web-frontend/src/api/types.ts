@@ -27,7 +27,11 @@ export type Playlist = {
   created_at: string;
 };
 
-export type MatchCandidate = LibraryTrack & { match_score: number };
+export type MatchCandidate = LibraryTrack & {
+  match_score: number;
+  title_match_score: number;
+  artist_match_score: number;
+};
 
 export type SourceTopMatchRow = {
   source_track_id: string;

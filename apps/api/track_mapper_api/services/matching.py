@@ -63,7 +63,7 @@ def pair_scores_for_source(
     rows: list[LibraryTrack],
     *,
     lt_by_id: dict[uuid.UUID, LibraryTrack] | None = None,
-) -> list[tuple[LibraryTrack, float]]:
+) -> list[tuple[LibraryTrack, float, float, float]]:
     """All scored library candidates for one source (same rules as match job), sorted by score desc."""
     ensure_repo_root_on_path()
     from src.track_matching import calculate_match_score
@@ -75,7 +75,7 @@ def pair_scores_for_source(
     tokens = create_all_tokens(st.title, st.artist, st.album or "")
     candidate_ids = index.get_candidates(tokens, max_candidates=40)
 
-    scored: list[tuple[LibraryTrack, float]] = []
+    scored: list[tuple[LibraryTrack, float, float, float]] = []
     seen_lt: set[uuid.UUID] = set()
     for rb_id in candidate_ids:
         rb = index.get_track(rb_id)
@@ -85,10 +85,13 @@ def pair_scores_for_source(
         if lt_id is None or lt_id in seen_lt:
             continue
         seen_lt.add(lt_id)
-        score = float(calculate_match_score(lhs, rb))
+        final_score, dbg = calculate_match_score(lhs, rb, return_debug=True)
+        score = float(final_score)
+        title_s = float(dbg["title_score"])
+        artist_s = float(dbg["artist_score"])
         lt = lookup.get(lt_id)
         if lt is not None:
-            scored.append((lt, score))
+            scored.append((lt, score, title_s, artist_s))
 
     scored.sort(key=lambda x: x[1], reverse=True)
     return scored
@@ -185,7 +188,7 @@ async def top_candidates_for_source(
     library_snapshot_id: uuid.UUID,
     limit: int = 8,
     min_score: float = 0.0,
-) -> list[tuple[LibraryTrack, float]]:
+) -> list[tuple[LibraryTrack, float, float, float]]:
     res = await db.execute(
         select(SourceTrack).where(
             SourceTrack.id == source_track_id,
@@ -222,8 +225,8 @@ async def top_candidates_for_source(
     lt_by_id = {r.id: r for r in rows}
     scored = pair_scores_for_source(st, index, id_by_rb, rows, lt_by_id=lt_by_id)
     filtered = [
-        (lt, s)
-        for lt, s in scored
+        (lt, s, ts, ars)
+        for lt, s, ts, ars in scored
         if s >= min_score and lt.id not in exclude_lt
     ]
     return filtered[:limit]
@@ -272,10 +275,10 @@ async def batch_top_match_by_source_id(
         pairs = pair_scores_for_source(
             st, index, id_by_rb, rows, lt_by_id=lt_by_id
         )
-        best = pairs[0] if pairs else (None, None)
-        if best[0] is None:
+        best = pairs[0] if pairs else None
+        if best is None:
             out[st.id] = empty
-        elif best[1] is not None and best[1] < min_score:
+        elif best[1] < min_score:
             # UI shows flag only in Best match cell — no track/score payload
             out[st.id] = (None, None, False, False, True)
         else:
@@ -334,7 +337,7 @@ async def run_match_job(
         )
         if not pairs:
             continue
-        best_lt, best_score = pairs[0]
+        best_lt, best_score, _, _ = pairs[0]
         if best_score < min_confidence:
             continue
 

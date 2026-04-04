@@ -1,9 +1,17 @@
+import type { ReactNode } from "react";
+
 import { AppHeader } from "./AppHeader";
 
-export function AppShell({ children }: { children: React.ReactNode }) {
+type AppShellProps = {
+  children: ReactNode;
+  /** Shown in the top bar after Workspace / Settings links */
+  headerMenuExtra?: ReactNode;
+};
+
+export function AppShell({ children, headerMenuExtra }: AppShellProps) {
   return (
     <div className="flex h-screen min-h-0 flex-col bg-background">
-      <AppHeader />
+      <AppHeader menuExtra={headerMenuExtra} />
       <main className="min-h-0 flex-1 overflow-hidden p-2">{children}</main>
     </div>
   );

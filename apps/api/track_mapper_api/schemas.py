@@ -102,3 +102,5 @@ class MatchRunOut(BaseModel):
 
 class LibraryCandidateOut(LibraryTrackOut):
     match_score: float
+    title_match_score: float
+    artist_match_score: float

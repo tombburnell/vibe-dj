@@ -268,7 +268,66 @@ export function WorkspacePage() {
       : libraryQuery.isLoading && libraryQuery.data.length === 0;
 
   return (
-    <AppShell>
+    <AppShell
+      headerMenuExtra={
+        <>
+          <input
+            ref={libraryFileRef}
+            type="file"
+            accept=".tsv,text/tab-separated-values"
+            className="hidden"
+            onChange={async (e) => {
+              const f = e.target.files?.[0];
+              e.target.value = "";
+              if (!f) return;
+              try {
+                const r = await importLibrarySnapshot(f);
+                showToast(`Library import: ${r.track_count} tracks`, "info");
+                libraryQuery.refetch();
+                bumpMatchData();
+              } catch (err) {
+                showToast(err instanceof Error ? err.message : String(err), "error");
+              }
+            }}
+          />
+          <button
+            type="button"
+            className="rounded border border-border bg-surface-1 px-2 py-1 text-[0.75rem] text-primary hover:bg-surface-2"
+            onClick={() => libraryFileRef.current?.click()}
+          >
+            Import Rekordbox TSV
+          </button>
+          <input
+            ref={playlistFileRef}
+            type="file"
+            accept=".csv,text/csv"
+            className="hidden"
+            onChange={async (e) => {
+              const f = e.target.files?.[0];
+              e.target.value = "";
+              if (!f) return;
+              try {
+                const r = await importPlaylistCsv(f);
+                showToast(
+                  `Playlist: linked ${r.rows_linked}, new sources ${r.new_source_tracks}`,
+                  "info",
+                );
+                sourceQuery.refetch();
+              } catch (err) {
+                showToast(err instanceof Error ? err.message : String(err), "error");
+              }
+            }}
+          />
+          <button
+            type="button"
+            className="rounded border border-border bg-surface-1 px-2 py-1 text-[0.75rem] text-primary hover:bg-surface-2"
+            onClick={() => playlistFileRef.current?.click()}
+          >
+            Import playlist CSV
+          </button>
+        </>
+      }
+    >
       <WorkspaceLayout
         toolbar={
           <div className="flex flex-wrap items-center gap-3">
@@ -280,121 +339,67 @@ export function WorkspacePage() {
                   value={matchCategoryFilter}
                   onChange={setMatchCategoryFilter}
                 />
+                <label className="flex items-center gap-1.5 text-[0.75rem] text-secondary">
+                  <span className="whitespace-nowrap">Min match</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={Math.round(minMatchScore * 100)}
+                    onChange={(e) => {
+                      const n = Number(e.target.value);
+                      if (!Number.isFinite(n)) return;
+                      setMinMatchScore(Math.min(100, Math.max(0, n)) / 100);
+                    }}
+                    className="w-14 rounded border border-border/80 bg-surface-1 px-1 py-0.5 tabular-nums text-primary"
+                  />
+                  <span>%</span>
+                </label>
+                <button
+                  type="button"
+                  disabled={runMatchingBusy}
+                  aria-busy={runMatchingBusy}
+                  className="inline-flex items-center gap-1.5 rounded border border-border bg-surface-2 px-2 py-1 text-[0.75rem] text-primary hover:bg-surface-1 disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={async () => {
+                    setRunMatchingBusy(true);
+                    try {
+                      const r = await runMatchJob({});
+                      showToast(
+                        `Match: ${r.matched_count} auto-linked, ${r.skipped_count} skipped`,
+                        "info",
+                      );
+                      const rows = sourceQuery.data ?? [];
+                      const ids = filterSourcesByDl(rows, dlFilter).map((s) => s.id);
+                      for (let i = 0; i < ids.length; i += 100) {
+                        const chunk = ids.slice(i, i + 100);
+                        const batch = await postSourceTopMatches(chunk, {
+                          minScore: minMatchScore,
+                        });
+                        applyTopMatchRows(batch);
+                      }
+                      setMatchRefreshEpoch((e) => e + 1);
+                    } catch (err) {
+                      showToast(err instanceof Error ? err.message : String(err), "error");
+                    } finally {
+                      setRunMatchingBusy(false);
+                    }
+                  }}
+                >
+                  {runMatchingBusy ? (
+                    <>
+                      <span
+                        className="inline-block size-3.5 shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent opacity-80"
+                        aria-hidden
+                      />
+                      <span>Matching…</span>
+                    </>
+                  ) : (
+                    "Run matching"
+                  )}
+                </button>
               </>
             ) : null}
-            <input
-              ref={libraryFileRef}
-              type="file"
-              accept=".tsv,text/tab-separated-values"
-              className="hidden"
-              onChange={async (e) => {
-                const f = e.target.files?.[0];
-                e.target.value = "";
-                if (!f) return;
-                try {
-                  const r = await importLibrarySnapshot(f);
-                  showToast(`Library import: ${r.track_count} tracks`, "info");
-                  libraryQuery.refetch();
-                  bumpMatchData();
-                } catch (err) {
-                  showToast(err instanceof Error ? err.message : String(err), "error");
-                }
-              }}
-            />
-            <button
-              type="button"
-              className="rounded border border-border bg-surface-2 px-2 py-1 text-[0.75rem] text-primary hover:bg-surface-1"
-              onClick={() => libraryFileRef.current?.click()}
-            >
-              Import Rekordbox TSV
-            </button>
-            <input
-              ref={playlistFileRef}
-              type="file"
-              accept=".csv,text/csv"
-              className="hidden"
-              onChange={async (e) => {
-                const f = e.target.files?.[0];
-                e.target.value = "";
-                if (!f) return;
-                try {
-                  const r = await importPlaylistCsv(f);
-                  showToast(
-                    `Playlist: linked ${r.rows_linked}, new sources ${r.new_source_tracks}`,
-                    "info",
-                  );
-                  sourceQuery.refetch();
-                } catch (err) {
-                  showToast(err instanceof Error ? err.message : String(err), "error");
-                }
-              }}
-            />
-            <button
-              type="button"
-              className="rounded border border-border bg-surface-2 px-2 py-1 text-[0.75rem] text-primary hover:bg-surface-1"
-              onClick={() => playlistFileRef.current?.click()}
-            >
-              Import playlist CSV
-            </button>
-            <label className="flex items-center gap-1.5 text-[0.75rem] text-secondary">
-              <span className="whitespace-nowrap">Min match</span>
-              <input
-                type="number"
-                min={0}
-                max={100}
-                step={1}
-                value={Math.round(minMatchScore * 100)}
-                onChange={(e) => {
-                  const n = Number(e.target.value);
-                  if (!Number.isFinite(n)) return;
-                  setMinMatchScore(Math.min(100, Math.max(0, n)) / 100);
-                }}
-                className="w-14 rounded border border-border/80 bg-surface-1 px-1 py-0.5 tabular-nums text-primary"
-              />
-              <span>%</span>
-            </label>
-            <button
-              type="button"
-              disabled={runMatchingBusy}
-              aria-busy={runMatchingBusy}
-              className="inline-flex items-center gap-1.5 rounded border border-border bg-surface-2 px-2 py-1 text-[0.75rem] text-primary hover:bg-surface-1 disabled:cursor-not-allowed disabled:opacity-60"
-              onClick={async () => {
-                setRunMatchingBusy(true);
-                try {
-                  const r = await runMatchJob({});
-                  showToast(
-                    `Match: ${r.matched_count} auto-linked, ${r.skipped_count} skipped`,
-                    "info",
-                  );
-                  const rows = sourceQuery.data ?? [];
-                  const ids = filterSourcesByDl(rows, dlFilter).map((s) => s.id);
-                  for (let i = 0; i < ids.length; i += 100) {
-                    const chunk = ids.slice(i, i + 100);
-                    const batch = await postSourceTopMatches(chunk, {
-                      minScore: minMatchScore,
-                    });
-                    applyTopMatchRows(batch);
-                  }
-                  setMatchRefreshEpoch((e) => e + 1);
-                } catch (err) {
-                  showToast(err instanceof Error ? err.message : String(err), "error");
-                } finally {
-                  setRunMatchingBusy(false);
-                }
-              }}
-            >
-              {runMatchingBusy ? (
-                <>
-                  <span
-                    className="inline-block size-3.5 shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent opacity-80"
-                    aria-hidden
-                  />
-                  <span>Matching…</span>
-                </>
-              ) : (
-                "Run matching"
-              )}
-            </button>
           </div>
         }
         primary={
