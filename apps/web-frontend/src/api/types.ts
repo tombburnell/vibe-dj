@@ -20,7 +20,25 @@ export type LibraryTrackPage = {
   next_cursor: string | null;
 };
 
+export type Playlist = {
+  id: string;
+  name: string;
+  import_source: string | null;
+  created_at: string;
+};
+
 export type MatchCandidate = LibraryTrack & { match_score: number };
+
+export type SourceTopMatchRow = {
+  source_track_id: string;
+  top_match_library_track_id: string | null;
+  top_match_title: string | null;
+  top_match_artist: string | null;
+  top_match_score: number | null;
+  top_match_duration_ms: number | null;
+  top_match_is_picked: boolean;
+  is_rejected_no_match: boolean;
+};
 
 export type SourceTrack = {
   id: string;
@@ -40,4 +58,13 @@ export type SourceTrack = {
   amazon_search_url: string | null;
   created_at: string;
   updated_at: string;
+  /** Best match vs latest library snapshot; null if no library or no candidates. */
+  top_match_title: string | null;
+  top_match_artist: string | null;
+  top_match_score: number | null;
+  top_match_duration_ms: number | null;
+  /** From batch overlay only — not set on bare GET /source-tracks. */
+  top_match_library_track_id?: string | null;
+  top_match_is_picked?: boolean;
+  is_rejected_no_match?: boolean;
 };

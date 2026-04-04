@@ -1,8 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { MouseEvent } from "react";
 
+import type { MatchCandidate } from "@/api/types";
 import {
   importLibrarySnapshot,
   importPlaylistCsv,
+  matchPick,
+  matchReject,
+  matchUndoAuto,
+  matchUndoPick,
+  matchUndoReject,
+  postSourceTopMatches,
   runMatchJob,
 } from "@/api/endpoints";
 import type { LibraryTrack } from "@/api/types";
@@ -16,9 +24,11 @@ import { TableSkeleton } from "@/components/ui/TableSkeleton";
 import { DlFilterSelect, type DlFilter } from "@/components/workspace/DlFilterSelect";
 import { MainViewTabs, type MainView } from "@/components/workspace/MainViewTabs";
 import { SecondaryPanel } from "@/components/workspace/SecondaryPanel";
+import { SourceTopMatchContext } from "@/contexts/SourceTopMatchContext";
 import { useLibraryTracks } from "@/hooks/useLibraryTracks";
 import { useMatchCandidates } from "@/hooks/useMatchCandidates";
 import { useSourceTracks } from "@/hooks/useSourceTracks";
+import { useVisibleSourceTopMatches } from "@/hooks/useVisibleSourceTopMatches";
 import { useToast } from "@/providers/ToastProvider";
 
 export function WorkspacePage() {
@@ -26,12 +36,22 @@ export function WorkspacePage() {
   const sourceQuery = useSourceTracks();
   const libraryQuery = useLibraryTracks();
   const [mainView, setMainView] = useState<MainView>("sources");
-  const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
+  const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
   const [selectedLibraryId, setSelectedLibraryId] = useState<string | null>(null);
   const [dlFilter, setDlFilter] = useState<DlFilter>("all");
-  const [playlistName, setPlaylistName] = useState("Imported playlist");
+  const [topMatchEpoch, setTopMatchEpoch] = useState(0);
+  const [minMatchScore, setMinMatchScore] = useState(0.4);
+  const [matchRefreshEpoch, setMatchRefreshEpoch] = useState(0);
+  const [matchActionBusy, setMatchActionBusy] = useState(false);
   const libraryFileRef = useRef<HTMLInputElement>(null);
   const playlistFileRef = useRef<HTMLInputElement>(null);
+  const sourceScrollRef = useRef<HTMLDivElement>(null);
+  const sourceDisplayOrderRef = useRef<string[]>([]);
+  const sourceShiftAnchorRef = useRef<string | null>(null);
+
+  const onSourceDisplayRowOrder = useCallback((ids: string[]) => {
+    sourceDisplayOrderRef.current = ids;
+  }, []);
 
   const sourceColumns = useMemo(() => buildSourceTrackColumns(), []);
   const libraryColumns = useMemo(() => buildLibraryTrackColumns(), []);
@@ -43,10 +63,57 @@ export function WorkspacePage() {
     return rows;
   }, [sourceQuery.data, dlFilter]);
 
-  const selectedSource = useMemo(
-    () => filteredSources.find((s) => s.id === selectedSourceId) ?? null,
-    [filteredSources, selectedSourceId],
+  const listFingerprint = useMemo(
+    () =>
+      `${topMatchEpoch}:${minMatchScore}:${filteredSources.map((s) => s.id).sort().join(",")}`,
+    [filteredSources, topMatchEpoch, minMatchScore],
   );
+
+  const { overlay, loadingIds, applyTopMatchRows } = useVisibleSourceTopMatches(
+    sourceScrollRef,
+    mainView === "sources" &&
+      !sourceQuery.isLoading &&
+      filteredSources.length > 0,
+    listFingerprint,
+    filteredSources.length,
+    {
+      onFetchError: (e) => showToast(e.message, "error"),
+      minScore: minMatchScore,
+    },
+  );
+
+  const mergedSources = useMemo(
+    () =>
+      filteredSources.map((s) => ({
+        ...s,
+        ...(overlay[s.id] ?? {}),
+      })),
+    [filteredSources, overlay],
+  );
+
+  const topMatchCtx = useMemo(
+    () => ({
+      isTopMatchLoading: (id: string) => loadingIds.has(id),
+    }),
+    [loadingIds],
+  );
+
+  const sourceSelectionCount = selectedSourceIds.length;
+
+  const selectedSource = useMemo(() => {
+    if (selectedSourceIds.length !== 1) return null;
+    return mergedSources.find((s) => s.id === selectedSourceIds[0]) ?? null;
+  }, [mergedSources, selectedSourceIds]);
+
+  const selectedSourcesBulk = useMemo((): SourceTrack[] => {
+    if (selectedSourceIds.length <= 1) return [];
+    const out: SourceTrack[] = [];
+    for (const id of selectedSourceIds) {
+      const s = mergedSources.find((x) => x.id === id);
+      if (s) out.push(s);
+    }
+    return out;
+  }, [mergedSources, selectedSourceIds]);
 
   const libraryRows = libraryQuery.data ?? [];
   const selectedLibrary = useMemo(
@@ -56,7 +123,110 @@ export function WorkspacePage() {
 
   const matchCandidates = useMatchCandidates(
     mainView === "sources" ? selectedSource : null,
+    minMatchScore,
+    matchRefreshEpoch,
   );
+
+  const bumpMatchData = () => {
+    setTopMatchEpoch((e) => e + 1);
+    setMatchRefreshEpoch((e) => e + 1);
+  };
+
+  /** Match mutations: refresh only this source’s overlay + candidates panel (no full table refetch). */
+  const withMatchActionForSource = async (
+    sourceTrackId: string,
+    fn: () => Promise<unknown>,
+  ) => {
+    await withMatchActionForSources([sourceTrackId], fn);
+  };
+
+  const withMatchActionForSources = async (
+    sourceTrackIds: string[],
+    fn: () => Promise<unknown>,
+  ) => {
+    const uniq = [...new Set(sourceTrackIds)].filter(Boolean).slice(0, 100);
+    setMatchActionBusy(true);
+    try {
+      await fn();
+      if (uniq.length === 0) return;
+      const rows = await postSourceTopMatches(uniq, {
+        minScore: minMatchScore,
+      });
+      applyTopMatchRows(rows);
+      setMatchRefreshEpoch((e) => e + 1);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : String(err), "error");
+    } finally {
+      setMatchActionBusy(false);
+    }
+  };
+
+  const handleSourceRowClick = (row: SourceTrack, e?: MouseEvent<HTMLTableRowElement>) => {
+    const id = row.id;
+    const order = sourceDisplayOrderRef.current;
+
+    if (e?.shiftKey && sourceShiftAnchorRef.current && order.length > 0) {
+      const a = order.indexOf(sourceShiftAnchorRef.current);
+      const b = order.indexOf(id);
+      if (a >= 0 && b >= 0) {
+        const lo = Math.min(a, b);
+        const hi = Math.max(a, b);
+        setSelectedSourceIds(order.slice(lo, hi + 1));
+        return;
+      }
+    }
+
+    if (e?.metaKey || e?.ctrlKey) {
+      setSelectedSourceIds((prev) =>
+        prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+      );
+      sourceShiftAnchorRef.current = id;
+      return;
+    }
+
+    setSelectedSourceIds([id]);
+    sourceShiftAnchorRef.current = id;
+  };
+
+  const runPickSelectedMatches = () => {
+    const targets: SourceTrack[] = [];
+    for (const sid of selectedSourceIds) {
+      const s = mergedSources.find((x) => x.id === sid);
+      if (!s) continue;
+      if (
+        s.top_match_library_track_id != null &&
+        s.top_match_score != null &&
+        !s.is_rejected_no_match &&
+        !s.top_match_is_picked
+      ) {
+        targets.push(s);
+      }
+    }
+    if (targets.length === 0) {
+      showToast(
+        "No eligible rows (need a best match; not rejected or already picked).",
+        "info",
+      );
+      return;
+    }
+    void withMatchActionForSources(selectedSourceIds, async () => {
+      for (const s of targets) {
+        await matchPick(s.id, s.top_match_library_track_id!, s.top_match_score);
+      }
+      showToast(`Picked ${targets.length} match(es).`, "info");
+    });
+  };
+
+  const runRejectSelectedMatches = () => {
+    if (selectedSourceIds.length === 0) return;
+    const n = selectedSourceIds.length;
+    void withMatchActionForSources(selectedSourceIds, async () => {
+      for (const sid of selectedSourceIds) {
+        await matchReject(sid);
+      }
+      showToast(`Rejected ${n} track(s).`, "info");
+    });
+  };
 
   useEffect(() => {
     if (sourceQuery.error) showToast(sourceQuery.error.message, "error");
@@ -67,10 +237,10 @@ export function WorkspacePage() {
   }, [libraryQuery.error, showToast]);
 
   useEffect(() => {
-    if (selectedSourceId && !filteredSources.some((s) => s.id === selectedSourceId)) {
-      setSelectedSourceId(null);
-    }
-  }, [filteredSources, selectedSourceId]);
+    setSelectedSourceIds((prev) =>
+      prev.filter((id) => filteredSources.some((s) => s.id === id)),
+    );
+  }, [filteredSources]);
 
   const primaryLoading =
     mainView === "sources"
@@ -99,6 +269,7 @@ export function WorkspacePage() {
                   const r = await importLibrarySnapshot(f);
                   showToast(`Library import: ${r.track_count} tracks`, "info");
                   libraryQuery.refetch();
+                  bumpMatchData();
                 } catch (err) {
                   showToast(err instanceof Error ? err.message : String(err), "error");
                 }
@@ -120,9 +291,8 @@ export function WorkspacePage() {
                 const f = e.target.files?.[0];
                 e.target.value = "";
                 if (!f) return;
-                const name = playlistName.trim() || "Imported playlist";
                 try {
-                  const r = await importPlaylistCsv(f, name);
+                  const r = await importPlaylistCsv(f);
                   showToast(
                     `Playlist: linked ${r.rows_linked}, new sources ${r.new_source_tracks}`,
                     "info",
@@ -133,14 +303,6 @@ export function WorkspacePage() {
                 }
               }}
             />
-            <input
-              type="text"
-              value={playlistName}
-              onChange={(e) => setPlaylistName(e.target.value)}
-              placeholder="Playlist name"
-              className="w-40 rounded border border-border bg-surface-2 px-2 py-1 text-[0.75rem] text-primary placeholder:text-muted"
-              aria-label="Playlist name for CSV import"
-            />
             <button
               type="button"
               className="rounded border border-border bg-surface-2 px-2 py-1 text-[0.75rem] text-primary hover:bg-surface-1"
@@ -148,6 +310,23 @@ export function WorkspacePage() {
             >
               Import playlist CSV
             </button>
+            <label className="flex items-center gap-1.5 text-[0.75rem] text-secondary">
+              <span className="whitespace-nowrap">Min match</span>
+              <input
+                type="number"
+                min={0}
+                max={100}
+                step={1}
+                value={Math.round(minMatchScore * 100)}
+                onChange={(e) => {
+                  const n = Number(e.target.value);
+                  if (!Number.isFinite(n)) return;
+                  setMinMatchScore(Math.min(100, Math.max(0, n)) / 100);
+                }}
+                className="w-14 rounded border border-border/80 bg-surface-1 px-1 py-0.5 tabular-nums text-primary"
+              />
+              <span>%</span>
+            </label>
             <button
               type="button"
               className="rounded border border-border bg-surface-2 px-2 py-1 text-[0.75rem] text-primary hover:bg-surface-1"
@@ -159,6 +338,7 @@ export function WorkspacePage() {
                     "info",
                   );
                   sourceQuery.refetch();
+                  bumpMatchData();
                 } catch (err) {
                   showToast(err instanceof Error ? err.message : String(err), "error");
                 }
@@ -175,19 +355,23 @@ export function WorkspacePage() {
             </h2>
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
               {primaryLoading ? (
-                <TableSkeleton rows={10} cols={5} />
+                <TableSkeleton rows={10} cols={6} />
               ) : mainView === "sources" ? (
-                <DataTable<SourceTrack>
-                  data={filteredSources}
-                  columns={sourceColumns}
-                  getRowId={(r) => r.id}
-                  selectedId={selectedSourceId}
-                  onRowClick={(r) => {
-                    setSelectedSourceId(r.id);
-                    setSelectedLibraryId(null);
-                  }}
-                  emptyMessage="No source tracks (check API or DL filter)."
-                />
+                <SourceTopMatchContext.Provider value={topMatchCtx}>
+                  <DataTable<SourceTrack>
+                    data={mergedSources}
+                    columns={sourceColumns}
+                    getRowId={(r) => r.id}
+                    selectedIds={selectedSourceIds}
+                    scrollContainerRef={sourceScrollRef}
+                    onDisplayRowOrder={onSourceDisplayRowOrder}
+                    onRowClick={(r, e) => {
+                      handleSourceRowClick(r, e);
+                      setSelectedLibraryId(null);
+                    }}
+                    emptyMessage="No source tracks (check API or DL filter)."
+                  />
+                </SourceTopMatchContext.Provider>
               ) : (
                 <DataTable<LibraryTrack>
                   data={libraryRows}
@@ -196,7 +380,7 @@ export function WorkspacePage() {
                   selectedId={selectedLibraryId}
                   onRowClick={(r) => {
                     setSelectedLibraryId(r.id);
-                    setSelectedSourceId(null);
+                    setSelectedSourceIds([]);
                   }}
                   emptyMessage="No library tracks."
                   enableSorting={false}
@@ -213,9 +397,41 @@ export function WorkspacePage() {
             mainView={mainView}
             selectedSource={selectedSource}
             selectedLibrary={selectedLibrary}
+            sourceSelectionCount={sourceSelectionCount}
+            selectedSourcesBulk={selectedSourcesBulk}
             candidates={matchCandidates.data}
             candidatesLoading={matchCandidates.isLoading}
             candidatesError={matchCandidates.error}
+            matchActionBusy={matchActionBusy}
+            onPickSelectedMatches={runPickSelectedMatches}
+            onRejectSelectedMatches={runRejectSelectedMatches}
+            onPickCandidate={(c: MatchCandidate) => {
+              const sid = selectedSource?.id;
+              if (!sid) return;
+              void withMatchActionForSource(sid, () =>
+                matchPick(sid, c.id, c.match_score),
+              );
+            }}
+            onRejectNoMatch={() => {
+              const sid = selectedSource?.id;
+              if (!sid) return;
+              void withMatchActionForSource(sid, () => matchReject(sid));
+            }}
+            onUndoPick={() => {
+              const sid = selectedSource?.id;
+              if (!sid) return;
+              void withMatchActionForSource(sid, () => matchUndoPick(sid));
+            }}
+            onUndoAuto={() => {
+              const sid = selectedSource?.id;
+              if (!sid) return;
+              void withMatchActionForSource(sid, () => matchUndoAuto(sid));
+            }}
+            onUndoReject={() => {
+              const sid = selectedSource?.id;
+              if (!sid) return;
+              void withMatchActionForSource(sid, () => matchUndoReject(sid));
+            }}
           />
         }
       />

@@ -27,6 +27,29 @@ class LibraryTrackPageOut(BaseModel):
     next_cursor: str | None = None
 
 
+class SourceTopMatchRowOut(BaseModel):
+    """Per-row best match for batch overlay (same snapshot rules as list used to compute)."""
+
+    source_track_id: str
+    top_match_library_track_id: str | None = None
+    top_match_title: str | None = None
+    top_match_artist: str | None = None
+    top_match_score: float | None = None
+    top_match_duration_ms: int | None = None
+    top_match_is_picked: bool = False
+    is_rejected_no_match: bool = False
+
+
+class SourceTopMatchesRequest(BaseModel):
+    source_track_ids: list[str] = Field(default_factory=list, max_length=100)
+    min_score: float = Field(
+        default=0.4,
+        ge=0.0,
+        le=1.0,
+        description="Minimum fuzzy score for top match; picked rows ignore this floor.",
+    )
+
+
 class SourceTrackOut(BaseModel):
     id: str
     user_id: str
@@ -45,6 +68,11 @@ class SourceTrackOut(BaseModel):
     amazon_search_url: str | None = None
     created_at: datetime
     updated_at: datetime
+    # Best fuzzy match vs latest library snapshot (null if no snapshot / no candidates).
+    top_match_title: str | None = None
+    top_match_artist: str | None = None
+    top_match_score: float | None = None
+    top_match_duration_ms: int | None = None
 
 
 class LibrarySnapshotImportOut(BaseModel):
@@ -56,6 +84,13 @@ class PlaylistImportOut(BaseModel):
     playlist_id: str
     rows_linked: int
     new_source_tracks: int
+
+
+class PlaylistOut(BaseModel):
+    id: str
+    name: str
+    import_source: str | None = None
+    created_at: datetime
 
 
 class MatchRunOut(BaseModel):

@@ -39,21 +39,27 @@
     --row-h: 2.5rem;
     --cell-py: 0.5rem;
     --cell-px: 0.75rem;
-    --text-table: 0.8125rem;
+    /* +10% vs former baseline 0.8125rem */
+    --text-table: 0.89375rem;
+    --text-src-triple: var(--text-table);
   }
 
   :root[data-density="compact"] {
     --row-h: 2rem;
     --cell-py: 0.25rem;
     --cell-px: 0.5rem;
-    --text-table: 0.75rem;
+    /* Former “comfortable” table text size */
+    --text-table: 0.8125rem;
+    --text-src-triple: var(--text-table);
   }
 
   :root[data-density="ultra-compact"] {
     --row-h: 1.625rem;
     --cell-py: 0.125rem;
     --cell-px: 0.375rem;
-    --text-table: 0.6875rem;
+    /* Former “compact” table text size */
+    --text-table: 0.75rem;
+    --text-src-triple: calc(0.8125rem * 0.8);
   }
 
   body {

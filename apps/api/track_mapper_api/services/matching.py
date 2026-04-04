@@ -10,6 +10,10 @@ from track_mapper_api.models.library import LibrarySnapshot, LibraryTrack
 from track_mapper_api.models.link import SourceLibraryLink
 from track_mapper_api.models.source import SourceTrack
 from track_mapper_api.repo_src_path import ensure_repo_root_on_path
+from track_mapper_api.services.source_link_actions import (
+    is_source_rejected_for_snapshot,
+    link_mode_for_source_snapshot,
+)
 
 
 def _library_rows_to_rb_tracks(rows: list[LibraryTrack]):
@@ -52,6 +56,44 @@ def _source_as_match_lhs(st: SourceTrack):
     )
 
 
+def pair_scores_for_source(
+    st: SourceTrack,
+    index,
+    id_by_rb: dict[str, uuid.UUID],
+    rows: list[LibraryTrack],
+    *,
+    lt_by_id: dict[uuid.UUID, LibraryTrack] | None = None,
+) -> list[tuple[LibraryTrack, float]]:
+    """All scored library candidates for one source (same rules as match job), sorted by score desc."""
+    ensure_repo_root_on_path()
+    from src.track_matching import calculate_match_score
+    from src.track_normalizer import create_all_tokens
+
+    lookup = lt_by_id if lt_by_id is not None else {r.id: r for r in rows}
+
+    lhs = _source_as_match_lhs(st)
+    tokens = create_all_tokens(st.title, st.artist, st.album or "")
+    candidate_ids = index.get_candidates(tokens, max_candidates=40)
+
+    scored: list[tuple[LibraryTrack, float]] = []
+    seen_lt: set[uuid.UUID] = set()
+    for rb_id in candidate_ids:
+        rb = index.get_track(rb_id)
+        if rb is None:
+            continue
+        lt_id = id_by_rb.get(rb_id)
+        if lt_id is None or lt_id in seen_lt:
+            continue
+        seen_lt.add(lt_id)
+        score = float(calculate_match_score(lhs, rb))
+        lt = lookup.get(lt_id)
+        if lt is not None:
+            scored.append((lt, score))
+
+    scored.sort(key=lambda x: x[1], reverse=True)
+    return scored
+
+
 async def _should_skip_source(
     db: AsyncSession,
     *,
@@ -64,10 +106,17 @@ async def _should_skip_source(
             SourceLibraryLink.user_id == user_id,
             SourceLibraryLink.source_track_id == source_track_id,
             SourceLibraryLink.library_snapshot_id == library_snapshot_id,
-            SourceLibraryLink.decision.in_(("confirmed", "picked", "rejected")),
+            SourceLibraryLink.decision.in_(("confirmed", "picked")),
         )
     )
-    return res.first() is not None
+    if res.first() is not None:
+        return True
+    return await is_source_rejected_for_snapshot(
+        db,
+        user_id=user_id,
+        source_track_id=source_track_id,
+        library_snapshot_id=library_snapshot_id,
+    )
 
 
 async def resolve_snapshot_id(
@@ -108,6 +157,26 @@ async def load_library_rows_for_snapshot(
     return list(result.scalars().all())
 
 
+async def _library_track_ids_excluded_from_candidates(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    source_track_id: uuid.UUID,
+    library_snapshot_id: uuid.UUID,
+) -> set[uuid.UUID]:
+    """Active match links for this source+snapshot — do not list again as candidates."""
+    res = await db.execute(
+        select(SourceLibraryLink.library_track_id).where(
+            SourceLibraryLink.user_id == user_id,
+            SourceLibraryLink.source_track_id == source_track_id,
+            SourceLibraryLink.library_snapshot_id == library_snapshot_id,
+            SourceLibraryLink.library_track_id.isnot(None),
+            SourceLibraryLink.decision.in_(("picked", "confirmed", "auto")),
+        )
+    )
+    return {row[0] for row in res.all() if row[0] is not None}
+
+
 async def top_candidates_for_source(
     db: AsyncSession,
     *,
@@ -115,11 +184,8 @@ async def top_candidates_for_source(
     source_track_id: uuid.UUID,
     library_snapshot_id: uuid.UUID,
     limit: int = 8,
+    min_score: float = 0.0,
 ) -> list[tuple[LibraryTrack, float]]:
-    ensure_repo_root_on_path()
-    from src.track_matching import calculate_match_score
-    from src.track_normalizer import create_all_tokens
-
     res = await db.execute(
         select(SourceTrack).where(
             SourceTrack.id == source_track_id,
@@ -130,6 +196,22 @@ async def top_candidates_for_source(
     if st is None:
         return []
 
+    mode, _ = await link_mode_for_source_snapshot(
+        db,
+        user_id=user_id,
+        source_track_id=source_track_id,
+        library_snapshot_id=library_snapshot_id,
+    )
+    if mode == "rejected":
+        return []
+
+    exclude_lt = await _library_track_ids_excluded_from_candidates(
+        db,
+        user_id=user_id,
+        source_track_id=source_track_id,
+        library_snapshot_id=library_snapshot_id,
+    )
+
     rows = await load_library_rows_for_snapshot(
         db, user_id=user_id, library_snapshot_id=library_snapshot_id
     )
@@ -137,27 +219,64 @@ async def top_candidates_for_source(
         return []
 
     index, id_by_rb = _build_index(rows)
-    lhs = _source_as_match_lhs(st)
-    tokens = create_all_tokens(st.title, st.artist, st.album or "")
-    candidate_ids = index.get_candidates(tokens, max_candidates=40)
+    lt_by_id = {r.id: r for r in rows}
+    scored = pair_scores_for_source(st, index, id_by_rb, rows, lt_by_id=lt_by_id)
+    filtered = [
+        (lt, s)
+        for lt, s in scored
+        if s >= min_score and lt.id not in exclude_lt
+    ]
+    return filtered[:limit]
 
-    scored: list[tuple[LibraryTrack, float]] = []
-    seen_lt: set[uuid.UUID] = set()
-    for rb_id in candidate_ids:
-        rb = index.get_track(rb_id)
-        if rb is None:
-            continue
-        lt_id = id_by_rb.get(rb_id)
-        if lt_id is None or lt_id in seen_lt:
-            continue
-        seen_lt.add(lt_id)
-        score = float(calculate_match_score(lhs, rb))
-        lt = next((r for r in rows if r.id == lt_id), None)
-        if lt is not None:
-            scored.append((lt, score))
 
-    scored.sort(key=lambda x: x[1], reverse=True)
-    return scored[:limit]
+async def batch_top_match_by_source_id(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    library_snapshot_id: uuid.UUID | None,
+    tracks: list[SourceTrack],
+    min_score: float = 0.0,
+) -> dict[uuid.UUID, tuple[LibraryTrack | None, float | None, bool, bool]]:
+    """Best library track, score, is_picked, is_rejected (rejected scope excludes fuzzy)."""
+    if library_snapshot_id is None or not tracks:
+        return {t.id: (None, None, False, False) for t in tracks}
+
+    rows = await load_library_rows_for_snapshot(
+        db, user_id=user_id, library_snapshot_id=library_snapshot_id
+    )
+    if not rows:
+        return {t.id: (None, None, False, False) for t in tracks}
+
+    index, id_by_rb = _build_index(rows)
+    lt_by_id = {r.id: r for r in rows}
+    out: dict[uuid.UUID, tuple[LibraryTrack | None, float | None, bool, bool]] = {}
+    for st in tracks:
+        mode, link = await link_mode_for_source_snapshot(
+            db,
+            user_id=user_id,
+            source_track_id=st.id,
+            library_snapshot_id=library_snapshot_id,
+        )
+        if mode == "rejected":
+            out[st.id] = (None, None, False, True)
+            continue
+        if mode == "picked" and link is not None and link.library_track_id is not None:
+            lt = lt_by_id.get(link.library_track_id)
+            if lt is not None:
+                out[st.id] = (lt, link.confidence, True, False)
+            else:
+                out[st.id] = (None, None, False, False)
+            continue
+
+        pairs = pair_scores_for_source(
+            st, index, id_by_rb, rows, lt_by_id=lt_by_id
+        )
+        best = pairs[0] if pairs else (None, None)
+        if best[0] is None or (best[1] is not None and best[1] < min_score):
+            out[st.id] = (None, None, False, False)
+        else:
+            out[st.id] = (best[0], best[1], False, False)
+    return out
 
 
 async def run_match_job(
@@ -169,8 +288,6 @@ async def run_match_job(
 ) -> tuple[uuid.UUID | None, int, int]:
     """Write auto links for source_tracks against the given (or latest) snapshot."""
     ensure_repo_root_on_path()
-    from src.track_matching import calculate_match_score
-    from src.track_normalizer import create_all_tokens
 
     sid = await resolve_snapshot_id(db, user_id=user_id, snapshot_id=library_snapshot_id)
     if sid is None:
@@ -181,6 +298,7 @@ async def run_match_job(
         return sid, 0, 0
 
     index, id_by_rb = _build_index(rows)
+    lt_by_id = {r.id: r for r in rows}
     src_res = await db.execute(select(SourceTrack).where(SourceTrack.user_id == user_id))
     sources = list(src_res.scalars().all())
 
@@ -207,26 +325,13 @@ async def run_match_job(
         )
         await db.flush()
 
-        lhs = _source_as_match_lhs(st)
-        tokens = create_all_tokens(st.title, st.artist, st.album or "")
-        candidate_ids = index.get_candidates(tokens, max_candidates=40)
-
-        best_rb_id = None
-        best_score = 0.0
-        for rb_id in candidate_ids:
-            rb = index.get_track(rb_id)
-            if rb is None:
-                continue
-            score = float(calculate_match_score(lhs, rb))
-            if score > best_score:
-                best_score = score
-                best_rb_id = rb_id
-
-        if best_rb_id is None or best_score < min_confidence:
+        pairs = pair_scores_for_source(
+            st, index, id_by_rb, rows, lt_by_id=lt_by_id
+        )
+        if not pairs:
             continue
-
-        lt_id = id_by_rb.get(best_rb_id)
-        if lt_id is None:
+        best_lt, best_score = pairs[0]
+        if best_score < min_confidence:
             continue
 
         db.add(
@@ -234,7 +339,7 @@ async def run_match_job(
                 id=uuid.uuid4(),
                 user_id=user_id,
                 source_track_id=st.id,
-                library_track_id=lt_id,
+                library_track_id=best_lt.id,
                 library_snapshot_id=sid,
                 decision="auto",
                 confidence=best_score,

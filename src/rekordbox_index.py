@@ -71,7 +71,8 @@ class RekordboxIndex:
                 self.token_frequency[token] = self.token_frequency.get(token, 0) + 1
 
         # Step 2: Build index with rare tokens only
-        max_frequency = int(self.total_tracks * rare_token_threshold)
+        # For very small libraries, int(N * threshold) can be 0 and would index nothing.
+        max_frequency = max(1, int(self.total_tracks * rare_token_threshold))
 
         for track in tracks:
             self.tracks[track.rb_track_id] = track

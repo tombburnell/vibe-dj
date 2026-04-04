@@ -7,37 +7,66 @@ import {
   type SortingState,
 } from "@tanstack/react-table";
 import clsx from "clsx";
-import { useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type MutableRefObject,
+  type Ref,
+} from "react";
+import type { MouseEvent } from "react";
 
 type Props<T> = {
   data: T[];
   columns: ColumnDef<T, unknown>[];
   getRowId: (row: T) => string;
-  selectedId: string | null;
-  onRowClick: (row: T) => void;
+  /** Single-selection highlight (library table). Ignored when `selectedIds` is set. */
+  selectedId?: string | null;
+  /** Multi-selection highlight (source table). */
+  selectedIds?: string[];
+  onRowClick: (row: T, event?: MouseEvent<HTMLTableRowElement>) => void;
   emptyMessage?: string;
   /** When false, headers are not sortable (e.g. server-paginated library). */
   enableSorting?: boolean;
+  /** Outer scroll container (for visibility / virtual helpers). */
+  scrollContainerRef?: Ref<HTMLDivElement>;
   /** Fire when the scroll container is near the bottom (infinite scroll). */
   onNearEnd?: () => void;
   hasMore?: boolean;
   isLoadingMore?: boolean;
+  /** Current visual row order (after sort) — for Shift+click range selection on source table. */
+  onDisplayRowOrder?: (rowIdsInOrder: string[]) => void;
 };
 
 export function DataTable<T>({
   data,
   columns,
   getRowId,
-  selectedId,
+  selectedId = null,
+  selectedIds,
   onRowClick,
   emptyMessage = "No rows",
   enableSorting = true,
+  scrollContainerRef,
   onNearEnd,
   hasMore = false,
   isLoadingMore = false,
+  onDisplayRowOrder,
 }: Props<T>) {
   const [sorting, setSorting] = useState<SortingState>([]);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const innerScrollRef = useRef<HTMLDivElement | null>(null);
+
+  const assignScrollRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      innerScrollRef.current = node;
+      const r = scrollContainerRef;
+      if (!r) return;
+      if (typeof r === "function") r(node);
+      else (r as MutableRefObject<HTMLDivElement | null>).current = node;
+    },
+    [scrollContainerRef],
+  );
 
   const table = useReactTable({
     data,
@@ -58,7 +87,14 @@ export function DataTable<T>({
   });
 
   useEffect(() => {
-    const el = scrollRef.current;
+    if (!onDisplayRowOrder) return;
+    onDisplayRowOrder(
+      table.getRowModel().rows.map((row) => getRowId(row.original)),
+    );
+  }, [data, sorting, getRowId, onDisplayRowOrder, table]);
+
+  useEffect(() => {
+    const el = innerScrollRef.current;
     if (!el || !onNearEnd) return;
 
     const onScroll = () => {
@@ -74,7 +110,7 @@ export function DataTable<T>({
   }, [onNearEnd, hasMore, isLoadingMore, data.length]);
 
   useEffect(() => {
-    const el = scrollRef.current;
+    const el = innerScrollRef.current;
     if (!el || !onNearEnd || !hasMore || isLoadingMore) return;
     if (el.scrollHeight <= el.clientHeight + 8) {
       onNearEnd();
@@ -94,7 +130,7 @@ export function DataTable<T>({
 
   return (
     <div
-      ref={scrollRef}
+      ref={assignScrollRef}
       className="flex min-h-0 flex-1 flex-col overflow-auto rounded border border-border bg-surface-1"
     >
       <table
@@ -149,10 +185,13 @@ export function DataTable<T>({
         <tbody>
           {table.getRowModel().rows.map((row) => {
             const id = getRowId(row.original);
-            const selected = id === selectedId;
+            const selected = selectedIds
+              ? selectedIds.includes(id)
+              : id === selectedId;
             return (
               <tr
                 key={row.id}
+                data-row-id={id}
                 className={clsx(
                   "cursor-pointer border-b border-[var(--color-row-divider)] transition-colors",
                   !selected && "hover:bg-[var(--color-row-hover)]",
@@ -164,7 +203,7 @@ export function DataTable<T>({
                     ? "inset var(--selection-bar-width) 0 0 0 var(--color-selection-bar), inset calc(-1 * var(--selection-bar-width)) 0 0 0 var(--color-selection-bar)"
                     : undefined,
                 }}
-                onClick={() => onRowClick(row.original)}
+                onClick={(e) => onRowClick(row.original, e)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" || e.key === " ") {
                     e.preventDefault();

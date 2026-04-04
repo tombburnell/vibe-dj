@@ -55,10 +55,13 @@ uv run uvicorn track_mapper_api.main:app --reload --host 0.0.0.0 --port 8000
 
 1. `POST /api/library-snapshots/import` — multipart `file` (Rekordbox TSV), optional `label`.
 2. `GET /api/library-tracks` — paginated JSON `{ "items": [...], "next_cursor": "<opaque> | null" }`. Query: `limit` (default 100, max 500), `cursor` (from previous `next_cursor`), optional `snapshot_id`.
-3. `POST /api/playlists/import` — multipart `file` (CSV), form `playlist_name`, optional `import_source`.
-4. `GET /api/source-tracks` — flattened source rows with `playlist_names`.
-5. `GET /api/source-tracks/{id}/candidates` — matcher top-K for the secondary panel.
-6. `POST /api/match/run` — JSON body optional `library_snapshot_id`, `min_confidence`.
+3. `GET /api/playlists` — list playlists for the current user.
+4. `DELETE /api/playlists/{playlist_id}` — delete playlist and unlink from all source tracks (`source_track_playlists` CASCADE).
+5. `POST /api/playlists/import` — multipart `file` (CSV), optional `playlist_name` (defaults to file basename from the part or `client_filename`), optional `client_filename`, optional `import_source`.
+6. `GET /api/source-tracks` — flattened source rows with `playlist_names`; `top_match_*` fields are null (use batch endpoint for grid).
+7. `POST /api/source-tracks/top-matches` — JSON `{ "source_track_ids": ["<uuid>", ...] }` (max 100) — best match per id vs latest library snapshot.
+8. `GET /api/source-tracks/{id}/candidates` — matcher top-K for the secondary panel.
+9. `POST /api/match/run` — JSON body optional `library_snapshot_id`, `min_confidence`.
 
 Matching reuses the monorepo [`src/`](../../src) package (`src.track_matching`, `src.rekordbox_index`, `src.rekordbox_tsv_parser`); the API adds the repo root to `sys.path` at runtime.
 

@@ -4,6 +4,7 @@ import csv
 import io
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 
 from sqlalchemy import insert, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +23,19 @@ async def _source_playlist_link_exists(
         )
     )
     return res.first() is not None
+
+
+def derive_playlist_display_name(
+    playlist_name: str | None, upload_filename: str | None
+) -> str:
+    """Use explicit name if provided; otherwise CSV upload basename; else default label."""
+    if playlist_name and playlist_name.strip():
+        return playlist_name.strip()
+    if upload_filename:
+        stem = Path(upload_filename).stem.strip()
+        if stem:
+            return stem
+    return "Imported playlist"
 
 
 def _norm_key(h: str) -> str:
@@ -61,20 +75,22 @@ async def import_playlist_csv(
     *,
     user_id: str,
     file_bytes: bytes,
-    playlist_name: str,
+    playlist_name: str | None = None,
+    upload_filename: str | None = None,
     import_source: str = "chosic_csv",
 ) -> tuple[uuid.UUID, int, int]:
     """Create playlist, upsert source_tracks (Spotify dedupe), attach M2M.
 
     Returns (playlist_id, rows_attached, new_source_rows).
     """
+    display_name = derive_playlist_display_name(playlist_name, upload_filename)
     text = file_bytes.decode("utf-8-sig", errors="replace")
     reader = csv.DictReader(io.StringIO(text))
     if not reader.fieldnames:
         pl = Playlist(
             id=uuid.uuid4(),
             user_id=user_id,
-            name=playlist_name,
+            name=display_name,
             import_source=import_source,
         )
         db.add(pl)
@@ -84,7 +100,7 @@ async def import_playlist_csv(
     pl = Playlist(
         id=uuid.uuid4(),
         user_id=user_id,
-        name=playlist_name,
+        name=display_name,
         import_source=import_source,
     )
     db.add(pl)

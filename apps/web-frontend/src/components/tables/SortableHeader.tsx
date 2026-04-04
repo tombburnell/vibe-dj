@@ -5,6 +5,7 @@ type Props<TData, TValue> = {
   column: Column<TData, TValue>;
   children: React.ReactNode;
   className?: string;
+  title?: string;
 };
 
 /** Clickable header for TanStack Table client-side sort. */
@@ -12,9 +13,14 @@ export function SortableHeader<TData, TValue>({
   column,
   children,
   className,
+  title,
 }: Props<TData, TValue>) {
   if (!column.getCanSort()) {
-    return <span className={className}>{children}</span>;
+    return (
+      <span className={className} title={title}>
+        {children}
+      </span>
+    );
   }
 
   const sorted = column.getIsSorted();
@@ -22,6 +28,7 @@ export function SortableHeader<TData, TValue>({
   return (
     <button
       type="button"
+      title={title}
       className={clsx(
         "inline-flex items-center gap-0.5 rounded font-medium text-secondary",
         "hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent",

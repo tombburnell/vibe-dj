@@ -47,6 +47,18 @@ export async function apiPostJson<T>(path: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+export async function apiDelete(path: string): Promise<void> {
+  const url = `${base()}${path.startsWith("/") ? path : `/${path}`}`;
+  const res = await fetch(url, {
+    method: "DELETE",
+    headers: { Accept: "application/json", ...devUserHeaders() },
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `${res.status} ${res.statusText}`);
+  }
+}
+
 export async function apiPostFormData<T>(path: string, form: FormData): Promise<T> {
   const url = `${base()}${path.startsWith("/") ? path : `/${path}`}`;
   const res = await fetch(url, {

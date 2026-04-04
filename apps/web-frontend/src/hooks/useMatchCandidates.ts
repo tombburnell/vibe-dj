@@ -12,7 +12,11 @@ export type MatchCandidatesState = {
 /**
  * Loads ranked library candidates from `GET /api/source-tracks/:id/candidates`.
  */
-export function useMatchCandidates(selected: SourceTrack | null): MatchCandidatesState {
+export function useMatchCandidates(
+  selected: SourceTrack | null,
+  minScore = 0.4,
+  refreshEpoch = 0,
+): MatchCandidatesState {
   const [data, setData] = useState<MatchCandidate[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
@@ -29,7 +33,7 @@ export function useMatchCandidates(selected: SourceTrack | null): MatchCandidate
     setIsLoading(true);
     setError(null);
 
-    fetchMatchCandidates(selected.id)
+    fetchMatchCandidates(selected.id, { minScore })
       .then((rows) => {
         if (!cancelled) {
           setData(rows);
@@ -46,7 +50,7 @@ export function useMatchCandidates(selected: SourceTrack | null): MatchCandidate
     return () => {
       cancelled = true;
     };
-  }, [selected?.id]);
+  }, [selected?.id, minScore, refreshEpoch]);
 
   return { data, isLoading, error };
 }
