@@ -4,6 +4,7 @@ import type { SourceTrack } from "@/api/types";
 import { formatDurationMs } from "@/lib/formatDuration";
 
 import { BestMatchCell } from "./BestMatchCell";
+import { DownloadedCell } from "./DownloadedCell";
 import { MatchScoreCell } from "./MatchScoreCell";
 import { SortableHeader } from "../SortableHeader";
 
@@ -145,7 +146,7 @@ export function buildSourceTrackColumns(): ColumnDef<SourceTrack>[] {
       header: ({ column }) => (
         <SortableHeader column={column}>DL</SortableHeader>
       ),
-      cell: ({ row }) => (row.original.local_file_path ? "✓" : "—"),
+      cell: ({ row }) => <DownloadedCell row={row} />,
       sortingFn: "basic",
     },
   ];

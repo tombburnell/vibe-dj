@@ -251,34 +251,29 @@ def test_find_amazon_links_need_queue_mocked(client: TestClient) -> None:
 
     assert client.post("/api/match/reject", json={"source_track_id": sid}).status_code == 200
 
-    from track_mapper_api.services.amazon_music_search import AmazonSearchResult
+    from track_mapper_api.services.web_search_service import WebSearchHit
 
-    fake = [
-        AmazonSearchResult(
-            title="T1",
-            artist="A1",
+    fake_query = '(site:tidal.com OR site:amazon.com) "Other Song"'
+    fake_hits = [
+        WebSearchHit(
             url="https://music.amazon.com/tracks/abc",
-            price="$0.99",
+            title="T1",
+            body="",
+            matched_domain="amazon.com",
             match_score=90.0,
         ),
-        AmazonSearchResult(
-            title="T2",
-            artist="A2",
+        WebSearchHit(
             url="https://music.amazon.com/albums/xyz",
-            price=None,
+            title="T2",
+            body="",
+            matched_domain="amazon.com",
             match_score=80.0,
         ),
     ]
 
-    with patch("track_mapper_api.services.find_amazon_links.AmazonMusicSearcher") as MS:
+    with patch("track_mapper_api.services.find_amazon_links.MultiSiteWebSearcher") as MS:
         inst = MS.return_value
-        inst.search_track = MagicMock(return_value=fake)
-        inst.generate_amazon_link = MagicMock(
-            return_value="https://www.amazon.com/s?k=test&i=digital-music"
-        )
-        inst.fetch_link_page_title = MagicMock(
-            return_value="  Stream T1 on Amazon Music  "
-        )
+        inst.search = MagicMock(return_value=(fake_query, fake_hits))
         r = client.post(
             "/api/source-tracks/find-amazon-links",
             json={"source_track_ids": [sid], "force": False},
@@ -291,21 +286,100 @@ def test_find_amazon_links_need_queue_mocked(client: TestClient) -> None:
     src2 = client.get("/api/source-tracks").json()
     row = src2[0]
     assert row["amazon_url"] == "https://music.amazon.com/tracks/abc"
-    assert row["amazon_price"] == "$0.99"
-    assert row["amazon_link_title"] == "Stream T1 on Amazon Music"
+    assert row["amazon_price"] is None
+    assert row["amazon_link_title"] == "T1"
     assert row["amazon_link_match_score"] == 90.0
     assert row["amazon_last_searched_at"] is not None
-    assert len(row["amazon_candidates"]) == 1
-    assert row["amazon_candidates"][0]["url"] == "https://music.amazon.com/albums/xyz"
+    assert len(row["amazon_candidates"]) == 2
+    assert row["amazon_candidates"][0]["url"] == "https://music.amazon.com/tracks/abc"
+    assert row["amazon_candidates"][0]["match_score"] == 90.0
+    assert row["amazon_candidates"][0]["broken"] is False
+    assert row["amazon_candidates"][1]["url"] == "https://music.amazon.com/albums/xyz"
+    assert row["amazon_candidates"][1]["match_score"] == 80.0
+    assert row["amazon_candidates"][1]["artist"] is None
 
-    with patch("track_mapper_api.services.find_amazon_links.AmazonMusicSearcher") as MS:
+    with patch("track_mapper_api.services.find_amazon_links.MultiSiteWebSearcher") as MS:
         inst = MS.return_value
-        inst.search_track = MagicMock(return_value=fake)
-        inst.generate_amazon_link = MagicMock(return_value="https://x")
-        inst.fetch_link_page_title = MagicMock(return_value=None)
+        inst.search = MagicMock(return_value=(fake_query, fake_hits))
         r2 = client.post(
             "/api/source-tracks/find-amazon-links",
             json={"source_track_ids": [sid], "force": False},
         )
     assert r2.json()["searched_count"] == 0
     assert r2.json()["skipped_cached_count"] == 1
+
+
+def test_mark_amazon_link_broken_alternate_then_primary(client: TestClient) -> None:
+    tsv_path = _FIXTURES / "minimal_rekordbox.tsv"
+    assert client.post(
+        "/api/library-snapshots/import",
+        files={"file": ("m.tsv", tsv_path.read_bytes(), "text/tab-separated-values")},
+    ).status_code == 200
+
+    csv_body = (
+        "Song,Artist,Album,Duration,Spotify Track Id\n"
+        "Other Song,Other Act,ALB,4:30,sp_other_1\n"
+    )
+    assert client.post(
+        "/api/playlists/import",
+        files={"file": ("pl.csv", csv_body.encode("utf-8"), "text/csv")},
+        data={},
+    ).status_code == 200
+
+    src = client.get("/api/source-tracks").json()
+    sid = src[0]["id"]
+    assert client.post("/api/match/reject", json={"source_track_id": sid}).status_code == 200
+
+    from track_mapper_api.services.web_search_service import WebSearchHit
+
+    fake_query = '(site:tidal.com OR site:amazon.com) "Other Song"'
+    fake_hits = [
+        WebSearchHit(
+            url="https://music.amazon.com/tracks/abc",
+            title="T1",
+            body="",
+            matched_domain="amazon.com",
+            match_score=90.0,
+        ),
+        WebSearchHit(
+            url="https://music.amazon.com/albums/xyz",
+            title="T2",
+            body="",
+            matched_domain="amazon.com",
+            match_score=80.0,
+        ),
+    ]
+
+    with patch("track_mapper_api.services.find_amazon_links.MultiSiteWebSearcher") as MS:
+        inst = MS.return_value
+        inst.search = MagicMock(return_value=(fake_query, fake_hits))
+        assert client.post(
+            "/api/source-tracks/find-amazon-links",
+            json={"source_track_ids": [sid], "force": False},
+        ).status_code == 200
+
+    alt = client.post(
+        f"/api/source-tracks/{sid}/mark-link-broken",
+        json={"url": "https://music.amazon.com/albums/xyz"},
+    )
+    assert alt.status_code == 200
+    u1 = alt.json()
+    assert u1["amazon_url"] == "https://music.amazon.com/tracks/abc"
+    by_url = {c["url"]: c for c in u1["amazon_candidates"]}
+    assert by_url["https://music.amazon.com/albums/xyz"]["broken"] is True
+    assert by_url["https://music.amazon.com/tracks/abc"]["broken"] is False
+
+    prime = client.post(
+        f"/api/source-tracks/{sid}/mark-link-broken",
+        json={"url": "https://music.amazon.com/tracks/abc"},
+    )
+    assert prime.status_code == 200
+    u2 = prime.json()
+    assert u2["amazon_url"] is None
+    assert all(c.get("broken") for c in u2["amazon_candidates"])
+
+    missing = client.post(
+        f"/api/source-tracks/{sid}/mark-link-broken",
+        json={"url": "https://not-in-list.example/foo"},
+    )
+    assert missing.status_code == 404

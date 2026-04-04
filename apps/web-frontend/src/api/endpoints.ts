@@ -1,11 +1,14 @@
-import { apiDelete, apiGet, apiPostFormData, apiPostJson } from "./client";
+import { apiDelete, apiGet, apiPostFormData, apiPostJson, apiPutJson } from "./client";
 import type {
   FindAmazonLinksResult,
+  LocalScanResult,
   LibraryTrackPage,
   MatchCandidate,
   Playlist,
+  SetLocalFileResult,
   SourceTopMatchRow,
   SourceTrack,
+  WebSearchProvider,
 } from "./types";
 
 const DEFAULT_LIBRARY_PAGE = 150;
@@ -58,11 +61,28 @@ export function postSourceTopMatches(
 export function findAmazonLinks(body: {
   source_track_ids?: string[];
   force?: boolean;
+  web_search_provider?: WebSearchProvider;
 }): Promise<FindAmazonLinksResult> {
   return apiPostJson<FindAmazonLinksResult>("/api/source-tracks/find-amazon-links", {
     source_track_ids: body.source_track_ids ?? [],
     force: body.force ?? false,
+    ...(body.web_search_provider != null
+      ? { web_search_provider: body.web_search_provider }
+      : {}),
   });
+}
+
+export function markSourceLinkBroken(
+  sourceTrackId: string,
+  url: string,
+  minScore = 0.4,
+): Promise<SourceTrack> {
+  const sp = new URLSearchParams();
+  sp.set("min_score", String(minScore));
+  return apiPostJson<SourceTrack>(
+    `/api/source-tracks/${encodeURIComponent(sourceTrackId)}/mark-link-broken?${sp.toString()}`,
+    { url },
+  ).then((r) => normalizeSourceTrack(r as SourceTrack));
 }
 
 export function sourceWishlistBatch(
@@ -73,6 +93,73 @@ export function sourceWishlistBatch(
     source_track_ids: sourceTrackIds,
     on_wishlist: onWishlist,
   });
+}
+
+export const LOCAL_SCAN_CHUNK_SIZE = 800;
+
+export async function postLocalScan(
+  relativePaths: string[],
+  options: {
+    minScore?: number;
+    onProgress?: (info: {
+      chunkIndex: number;
+      chunkCount: number;
+      filesInChunk: number;
+    }) => void;
+  } = {},
+): Promise<LocalScanResult> {
+  const min = options.minScore ?? 80;
+  const onProgress = options.onProgress;
+  console.info("[local-scan]", "postLocalScan start", {
+    pathCount: relativePaths.length,
+    minScore: min,
+  });
+  const aggregated: LocalScanResult = {
+    matched: [],
+    unmatched_files: [],
+    unmatched_details: [],
+    skipped_non_audio: 0,
+    min_score: min,
+  };
+  const chunkCount = Math.max(
+    1,
+    Math.ceil(relativePaths.length / LOCAL_SCAN_CHUNK_SIZE),
+  );
+  for (let i = 0; i < relativePaths.length; i += LOCAL_SCAN_CHUNK_SIZE) {
+    const chunk = relativePaths.slice(i, i + LOCAL_SCAN_CHUNK_SIZE);
+    const chunkIndex = Math.floor(i / LOCAL_SCAN_CHUNK_SIZE) + 1;
+    onProgress?.({
+      chunkIndex,
+      chunkCount,
+      filesInChunk: chunk.length,
+    });
+    const part = await apiPostJson<LocalScanResult>("/api/source-tracks/local-scan", {
+      files: chunk.map((path) => ({ path })),
+      min_score: min,
+    });
+    aggregated.matched.push(...part.matched);
+    aggregated.unmatched_files.push(...part.unmatched_files);
+    aggregated.unmatched_details.push(...(part.unmatched_details ?? []));
+    aggregated.skipped_non_audio += part.skipped_non_audio;
+    aggregated.min_score = part.min_score ?? min;
+  }
+  return aggregated;
+}
+
+export function clearSourceTrackLocalFile(sourceTrackId: string): Promise<void> {
+  return apiDelete(
+    `/api/source-tracks/${encodeURIComponent(sourceTrackId)}/local-file`,
+  );
+}
+
+export function setSourceTrackLocalFile(
+  sourceTrackId: string,
+  path: string,
+): Promise<SetLocalFileResult> {
+  return apiPutJson<SetLocalFileResult>(
+    `/api/source-tracks/${encodeURIComponent(sourceTrackId)}/local-file`,
+    { path },
+  );
 }
 
 export function fetchPlaylists(): Promise<Playlist[]> {

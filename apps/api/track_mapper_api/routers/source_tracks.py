@@ -14,10 +14,18 @@ from track_mapper_api.models.playlist import Playlist, source_track_playlists
 from track_mapper_api.models.source import SourceTrack
 from track_mapper_api.schemas import (
     AmazonLinkCandidateOut,
+    ClearLocalFileOut,
+    SetLocalFileIn,
+    SetLocalFileOut,
     FindAmazonLinksOut,
     FindAmazonLinksRequest,
     LibraryCandidateOut,
     LibraryTrackOut,
+    LocalScanMatchedOut,
+    LocalScanOut,
+    LocalScanRequest,
+    LocalScanUnmatchedOut,
+    MarkLinkBrokenIn,
     SourceTopMatchRowOut,
     SourceTopMatchesRequest,
     SourceTrackOut,
@@ -25,27 +33,68 @@ from track_mapper_api.schemas import (
     SourceWishlistBatchOut,
 )
 from track_mapper_api.services.find_amazon_links import find_amazon_links_for_user
+from track_mapper_api.services.web_search_service import display_link_title
 from track_mapper_api.services.matching import (
     batch_top_match_by_source_id,
     resolve_snapshot_id,
     top_candidates_for_source,
 )
+from track_mapper_api.services.local_download_scan import (
+    clear_source_local_file,
+    run_local_download_scan,
+    set_source_local_file,
+)
+from track_mapper_api.services.source_link_broken import mark_source_amazon_link_broken
 from track_mapper_api.services.source_track_wishlist import set_wishlist_batch
 
 router = APIRouter(prefix="/source-tracks", tags=["source-tracks"])
 
+# Legacy rows stored ``matched_domain`` in ``artist``; UI joins title + artist with " — ".
+_KNOWN_SITE_ARTIST_PLACEHOLDERS = frozenset({"amazon.com", "soundcloud.com", "tidal.com"})
 
-def _amazon_candidates_from_db(raw: list | None) -> list[AmazonLinkCandidateOut]:
+
+def _amazon_candidates_from_db(
+    raw: list | None,
+    *,
+    st: SourceTrack | None = None,
+) -> list[AmazonLinkCandidateOut]:
+    """Normalize JSON candidates; legacy rows omit the primary URL from the array — prepend it."""
     if not raw:
-        return []
-    out: list[AmazonLinkCandidateOut] = []
-    for item in raw:
-        if not isinstance(item, dict):
-            continue
-        try:
-            out.append(AmazonLinkCandidateOut.model_validate(item))
-        except Exception:
-            continue
+        out: list[AmazonLinkCandidateOut] = []
+    else:
+        out = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            try:
+                cand = AmazonLinkCandidateOut.model_validate(item)
+            except Exception:
+                continue
+            shown = display_link_title(cand.url, cand.title)
+            artist = cand.artist
+            if artist and artist.strip().lower() in _KNOWN_SITE_ARTIST_PLACEHOLDERS:
+                artist = None
+            updates: dict[str, str | None] = {}
+            if shown is not None and shown != cand.title:
+                updates["title"] = shown
+            if artist != cand.artist:
+                updates["artist"] = artist
+            if updates:
+                cand = cand.model_copy(update=updates)
+            out.append(cand)
+
+    primary_url = (st.amazon_url or "").strip() if st else ""
+    if primary_url and not any(c.url == primary_url for c in out):
+        shown_primary = display_link_title(primary_url, st.amazon_link_title)
+        synthetic = AmazonLinkCandidateOut(
+            url=primary_url,
+            title=shown_primary,
+            artist=None,
+            match_score=st.amazon_link_match_score,
+            price=st.amazon_price,
+            broken=False,
+        )
+        out.insert(0, synthetic)
     return out
 
 
@@ -101,10 +150,10 @@ def _st_out(
         amazon_url=st.amazon_url,
         amazon_search_url=st.amazon_search_url,
         amazon_price=st.amazon_price,
-        amazon_link_title=st.amazon_link_title,
+        amazon_link_title=display_link_title(st.amazon_url, st.amazon_link_title),
         amazon_link_match_score=st.amazon_link_match_score,
         amazon_last_searched_at=st.amazon_last_searched_at,
-        amazon_candidates=_amazon_candidates_from_db(st.amazon_candidates_json),
+        amazon_candidates=_amazon_candidates_from_db(st.amazon_candidates_json, st=st),
         created_at=st.created_at,
         updated_at=st.updated_at,
         top_match_title=lt.title if lt else None,
@@ -115,6 +164,40 @@ def _st_out(
         top_match_is_picked=top_match_is_picked,
         is_rejected_no_match=is_rejected_no_match,
         top_match_below_minimum=top_match_below_minimum,
+    )
+
+
+async def _source_track_out_one(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    st: SourceTrack,
+    min_score: float,
+) -> SourceTrackOut:
+    names_by_source = await _playlist_names_for_sources(
+        db, user_id=user_id, source_ids=[st.id]
+    )
+    snap = await resolve_snapshot_id(db, user_id=user_id, snapshot_id=None)
+    best = await batch_top_match_by_source_id(
+        db,
+        user_id=user_id,
+        library_snapshot_id=snap,
+        tracks=[st],
+        min_score=min_score,
+    )
+    lt, sc, is_picked, is_rejected, below_min = best.get(
+        st.id, (None, None, False, False, False)
+    )
+    lid = str(lt.id) if lt else None
+    return _st_out(
+        st,
+        names_by_source.get(st.id, []),
+        lt=lt,
+        sc=sc,
+        top_match_library_track_id=lid,
+        top_match_is_picked=is_picked,
+        is_rejected_no_match=is_rejected,
+        top_match_below_minimum=below_min,
     )
 
 
@@ -149,7 +232,7 @@ async def list_source_tracks(
     result = await db.execute(
         select(SourceTrack)
         .where(SourceTrack.user_id == user_id)
-        .order_by(SourceTrack.updated_at.desc())
+        .order_by(SourceTrack.created_at.desc(), SourceTrack.id.desc())
     )
     tracks = list(result.scalars().all())
     source_ids = [t.id for t in tracks]
@@ -200,13 +283,42 @@ async def post_wishlist_batch(
     return SourceWishlistBatchOut(updated_count=n)
 
 
+@router.post("/{source_track_id}/mark-link-broken", response_model=SourceTrackOut)
+async def post_mark_link_broken(
+    source_track_id: str,
+    body: MarkLinkBrokenIn,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+    min_score: float = Query(
+        default=0.4,
+        ge=0.0,
+        le=1.0,
+        description="Same fuzzy floor as GET /source-tracks for top_match_below_minimum.",
+    ),
+) -> SourceTrackOut:
+    try:
+        sid = uuid.UUID(source_track_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="Invalid source_track_id") from e
+    try:
+        st = await mark_source_amazon_link_broken(
+            db,
+            user_id=user_id,
+            source_track_id=sid,
+            url=body.url,
+        )
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    return await _source_track_out_one(db, user_id=user_id, st=st, min_score=min_score)
+
+
 @router.post("/find-amazon-links", response_model=FindAmazonLinksOut)
 async def post_find_amazon_links(
     body: FindAmazonLinksRequest,
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(get_current_user_id),
 ) -> FindAmazonLinksOut:
-    """Search purchase links for Need (rejected) tracks; skips rows already searched unless force."""
+    """Find web links (Tidal / Amazon / SoundCloud) for Need (rejected) tracks; skips cached rows unless force."""
     ids: list[uuid.UUID] | None = None
     if body.source_track_ids:
         parsed: list[uuid.UUID] = []
@@ -229,6 +341,7 @@ async def post_find_amazon_links(
         user_id=user_id,
         source_track_ids=ids,
         force=body.force,
+        web_search_provider=body.web_search_provider,
     )
     await db.commit()
     return FindAmazonLinksOut(
@@ -237,6 +350,100 @@ async def post_find_amazon_links(
         skipped_cached_count=stats.skipped_cached_count,
         error_count=stats.error_count,
     )
+
+
+@router.post("/local-scan", response_model=LocalScanOut)
+async def post_local_scan(
+    body: LocalScanRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+) -> LocalScanOut:
+    """Match browser folder file paths to source rows (filename stem + fuzzy score)."""
+    paths = [f.path for f in body.files]
+    result = await run_local_download_scan(
+        db,
+        user_id=user_id,
+        display_paths=paths,
+        min_score=body.min_score,
+    )
+    return LocalScanOut(
+        matched=[
+            LocalScanMatchedOut(
+                source_track_id=str(m.source_track_id),
+                path=m.path,
+                score=m.score,
+                title=m.title,
+                artist=m.artist,
+            )
+            for m in result.matched
+        ],
+        unmatched_files=result.unmatched_files,
+        unmatched_details=[
+            LocalScanUnmatchedOut(
+                path=u.path,
+                parsed_artist=u.parsed_artist,
+                parsed_title=u.parsed_title,
+                best_score=u.best_score,
+                best_source_track_id=str(u.best_source_track_id)
+                if u.best_source_track_id
+                else None,
+                best_source_artist=u.best_source_artist,
+                best_source_title=u.best_source_title,
+                below_threshold=u.below_threshold,
+                source_claimed_by_other_file=u.source_claimed_by_other_file,
+                best_source_already_has_file=u.best_source_already_has_file,
+            )
+            for u in result.unmatched_details
+        ],
+        skipped_non_audio=result.skipped_non_audio,
+        min_score=body.min_score,
+    )
+
+
+@router.put("/{source_track_id}/local-file", response_model=SetLocalFileOut)
+async def put_source_local_file(
+    source_track_id: str,
+    body: SetLocalFileIn,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+) -> SetLocalFileOut:
+    try:
+        sid = uuid.UUID(source_track_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="Invalid source_track_id") from e
+    try:
+        row = await set_source_local_file(
+            db,
+            user_id=user_id,
+            source_track_id=sid,
+            display_path=body.path,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    if row is None:
+        raise HTTPException(status_code=404, detail="Source track not found")
+    return SetLocalFileOut(
+        source_track_id=str(row.id),
+        path=row.local_file_path or body.path.strip(),
+        title=row.title,
+        artist=row.artist,
+    )
+
+
+@router.delete("/{source_track_id}/local-file", response_model=ClearLocalFileOut)
+async def delete_source_local_file(
+    source_track_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+) -> ClearLocalFileOut:
+    try:
+        sid = uuid.UUID(source_track_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="Invalid source_track_id") from e
+    ok = await clear_source_local_file(db, user_id=user_id, source_track_id=sid)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Source track not found")
+    return ClearLocalFileOut(cleared=True)
 
 
 @router.post("/top-matches", response_model=list[SourceTopMatchRowOut])

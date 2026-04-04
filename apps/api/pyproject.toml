@@ -11,6 +11,7 @@ dependencies = [
     "fastapi>=0.115.0",
     "greenlet>=3.0.0",
     "psycopg[binary]>=3.2.0",
+    "python-dotenv>=1.0.0",
     "python-multipart>=0.0.9",
     "rapidfuzz>=3.9.0",
     "requests>=2.31.0",

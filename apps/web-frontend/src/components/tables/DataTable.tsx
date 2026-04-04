@@ -10,12 +10,71 @@ import clsx from "clsx";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type MutableRefObject,
+  type ReactNode,
   type Ref,
 } from "react";
-import type { MouseEvent as ReactMouseEvent } from "react";
+import type {
+  Dispatch,
+  MouseEvent as ReactMouseEvent,
+  SetStateAction,
+} from "react";
+
+/** Internal column: absorbs remaining panel width so data columns keep fixed px sizes while resizing. */
+const TABLE_FILL_COLUMN_ID = "__tmTableFill";
+
+function attachPixelColumnResizePointer(
+  setColumnWidths: Dispatch<SetStateAction<Record<string, number>>>,
+  setResizingColumnId: (id: string | null) => void,
+  columnId: string,
+  min: number,
+  max: number,
+  startClientX: number,
+  startSize: number,
+  doc: Document,
+  kind: "mouse" | "touch",
+) {
+  const onMove = (clientX: number) => {
+    const delta = clientX - startClientX;
+    const next = Math.round(Math.min(max, Math.max(min, startSize + delta)));
+    setColumnWidths((old) =>
+      old[columnId] === next ? old : { ...old, [columnId]: next },
+    );
+  };
+
+  const onMouseMove = (e: MouseEvent) => onMove(e.clientX);
+  const onMouseUp = (e: MouseEvent) => {
+    doc.removeEventListener("mousemove", onMouseMove);
+    doc.removeEventListener("mouseup", onMouseUp);
+    setResizingColumnId(null);
+    onMove(e.clientX);
+  };
+
+  const onTouchMove = (e: TouchEvent) => {
+    if (e.cancelable) e.preventDefault();
+    const x = e.touches[0]?.clientX;
+    if (typeof x === "number") onMove(x);
+  };
+  const onTouchEnd = (e: TouchEvent) => {
+    doc.removeEventListener("touchmove", onTouchMove);
+    doc.removeEventListener("touchend", onTouchEnd);
+    setResizingColumnId(null);
+    const x = e.changedTouches[0]?.clientX;
+    if (typeof x === "number") onMove(x);
+  };
+
+  if (kind === "mouse") {
+    doc.addEventListener("mousemove", onMouseMove);
+    doc.addEventListener("mouseup", onMouseUp);
+  } else {
+    doc.addEventListener("touchmove", onTouchMove, { passive: false });
+    doc.addEventListener("touchend", onTouchEnd);
+  }
+}
 
 type Props<T> = {
   data: T[];
@@ -40,6 +99,8 @@ type Props<T> = {
   isLoadingMore?: boolean;
   /** Current visual row order (after sort) — for Shift+click range selection on source table. */
   onDisplayRowOrder?: (rowIdsInOrder: string[]) => void;
+  /** Full-width strip above column headers (inside the table panel border). */
+  topChrome?: ReactNode;
 };
 
 export function DataTable<T>({
@@ -56,12 +117,32 @@ export function DataTable<T>({
   hasMore = false,
   isLoadingMore = false,
   onDisplayRowOrder,
+  topChrome,
 }: Props<T>) {
   /** Multi-select tables: avoid drag-selecting text across rows; cells stay `select-text`. */
   const multiSelectCellText = selectedIds !== undefined;
 
   const [sorting, setSorting] = useState<SortingState>([]);
+  const [resizingColumnId, setResizingColumnId] = useState<string | null>(null);
+  /** Pixel widths keyed by column id — avoids TanStack columnSizing + controlled `sorting` merge edge cases. */
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
+  const [containerWidth, setContainerWidth] = useState(0);
   const innerScrollRef = useRef<HTMLDivElement | null>(null);
+
+  const columnsWithFill = useMemo((): ColumnDef<T, unknown>[] => {
+    const fill: ColumnDef<T, unknown> = {
+      id: TABLE_FILL_COLUMN_ID,
+      accessorFn: () => null,
+      header: () => null,
+      cell: () => null,
+      size: 0,
+      minSize: 0,
+      maxSize: 99_999,
+      enableResizing: false,
+      enableSorting: false,
+    };
+    return [...columns, fill];
+  }, [columns]);
 
   const assignScrollRef = useCallback(
     (node: HTMLDivElement | null) => {
@@ -88,21 +169,45 @@ export function DataTable<T>({
 
   const table = useReactTable({
     data,
-    columns,
+    columns: columnsWithFill,
     state: { sorting },
     onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getRowId: (row, i) => getRowId(row) || String(i),
     enableSorting,
-    columnResizeMode: "onChange",
-    enableColumnResizing: true,
+    enableColumnResizing: false,
     defaultColumn: {
       minSize: 40,
       maxSize: 640,
       size: 120,
     },
   });
+
+  useLayoutEffect(() => {
+    if (data.length === 0) {
+      setContainerWidth(0);
+      return;
+    }
+    const el = innerScrollRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setContainerWidth(el.clientWidth));
+    ro.observe(el);
+    setContainerWidth(el.clientWidth);
+    return () => ro.disconnect();
+  }, [data.length]);
+
+  const dataColumnsTotal = table
+    .getVisibleLeafColumns()
+    .filter((c) => c.id !== TABLE_FILL_COLUMN_ID)
+    .reduce((sum, c) => {
+      const min = c.columnDef.minSize ?? 40;
+      const max = c.columnDef.maxSize ?? 640;
+      const raw = columnWidths[c.id] ?? c.getSize();
+      return sum + Math.min(max, Math.max(min, raw));
+    }, 0);
+  const tableWidth = Math.max(containerWidth, dataColumnsTotal);
+  const fillWidth = Math.max(0, tableWidth - dataColumnsTotal);
 
   useEffect(() => {
     if (!onDisplayRowOrder) return;
@@ -135,13 +240,25 @@ export function DataTable<T>({
     }
   }, [data.length, hasMore, isLoadingMore, onNearEnd]);
 
+  const leafColCount = table.getVisibleLeafColumns().length;
+
   if (data.length === 0) {
     return (
-      <div
-        className="flex items-center justify-center rounded border border-dashed border-border py-12 text-[var(--text-table)] text-muted"
-        role="status"
-      >
-        {emptyMessage}
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded border border-border bg-surface-1">
+        {topChrome != null ? (
+          <div
+            className="shrink-0 bg-surface-2 px-[var(--cell-px)] py-1 text-[0.65rem] font-semibold uppercase tracking-wide text-muted shadow-sm"
+            role="presentation"
+          >
+            {topChrome}
+          </div>
+        ) : null}
+        <div
+          className="flex flex-1 items-center justify-center px-[var(--cell-px)] py-12 text-center text-[var(--text-table)] text-muted"
+          role="status"
+        >
+          {emptyMessage}
+        </div>
       </div>
     );
   }
@@ -154,49 +271,132 @@ export function DataTable<T>({
       <table
         className="border-collapse text-left text-[var(--text-table)]"
         style={{
-          width: table.getCenterTotalSize(),
-          minWidth: "100%",
+          width: tableWidth,
           tableLayout: "fixed",
         }}
       >
         <thead className="sticky top-0 z-10 bg-surface-2 shadow-sm">
+          {topChrome != null ? (
+            <tr>
+              <th
+                className="px-[var(--cell-px)] py-1 text-left text-[0.65rem] font-semibold uppercase tracking-wide text-muted"
+                colSpan={leafColCount}
+                scope="colgroup"
+              >
+                {topChrome}
+              </th>
+            </tr>
+          ) : null}
           {table.getHeaderGroups().map((hg) => (
             <tr key={hg.id} className="border-b border-border">
-              {hg.headers.map((h) => (
-                <th
-                  key={h.id}
-                  className="relative whitespace-nowrap px-[var(--cell-px)] py-[var(--cell-py)]"
-                  scope="col"
-                  style={{
-                    height: "var(--row-h)",
-                    width: h.getSize(),
-                    minWidth: h.getSize(),
-                    maxWidth: h.getSize(),
-                  }}
-                >
-                  {h.isPlaceholder ? null : (
-                    <>
-                      <div className="overflow-hidden text-ellipsis pr-1">
-                        {flexRender(h.column.columnDef.header, h.getContext())}
-                      </div>
-                      {h.column.getCanResize() ? (
-                        <div
-                          role="separator"
-                          aria-orientation="vertical"
-                          aria-label={`Resize ${String(h.column.id)} column`}
-                          onMouseDown={h.getResizeHandler()}
-                          onTouchStart={h.getResizeHandler()}
-                          className={clsx(
-                            "absolute right-0 top-0 z-20 h-full w-1.5 touch-none select-none",
-                            "cursor-col-resize border-r border-transparent hover:border-accent/80",
-                            h.column.getIsResizing() && "border-accent bg-accent/20",
-                          )}
-                        />
-                      ) : null}
-                    </>
-                  )}
-                </th>
-              ))}
+              {hg.headers.map((h) => {
+                const isFill = h.column.id === TABLE_FILL_COLUMN_ID;
+                const col = h.column;
+                const minW = col.columnDef.minSize ?? 40;
+                const maxW = col.columnDef.maxSize ?? 640;
+                const rawW = isFill
+                  ? fillWidth
+                  : columnWidths[col.id] ?? col.getSize();
+                const colW = isFill
+                  ? fillWidth
+                  : Math.min(maxW, Math.max(minW, rawW));
+                const showResize =
+                  !isFill &&
+                  !h.isPlaceholder &&
+                  h.subHeaders.length === 0 &&
+                  (col.columnDef.enableResizing ?? true);
+                return (
+                  <th
+                    key={h.id}
+                    className={clsx(
+                      "relative whitespace-nowrap py-[var(--cell-py)]",
+                      !isFill && "px-[var(--cell-px)]",
+                      isFill && "p-0",
+                    )}
+                    scope="col"
+                    aria-hidden={isFill ? true : undefined}
+                    style={{
+                      height: "var(--row-h)",
+                      width: colW,
+                      minWidth: colW,
+                      maxWidth: colW,
+                    }}
+                  >
+                    {h.isPlaceholder ? null : (
+                      <>
+                        {!isFill ? (
+                          <div className="overflow-hidden text-ellipsis pr-1">
+                            {flexRender(
+                              h.column.columnDef.header,
+                              h.getContext(),
+                            )}
+                          </div>
+                        ) : null}
+                        {showResize ? (
+                          <div
+                            role="separator"
+                            aria-orientation="vertical"
+                            aria-label={`Resize ${String(col.id)} column`}
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setResizingColumnId(col.id);
+                              const startSize = Math.min(
+                                maxW,
+                                Math.max(
+                                  minW,
+                                  columnWidths[col.id] ?? col.getSize(),
+                                ),
+                              );
+                              attachPixelColumnResizePointer(
+                                setColumnWidths,
+                                setResizingColumnId,
+                                col.id,
+                                minW,
+                                maxW,
+                                e.clientX,
+                                startSize,
+                                e.view.document,
+                                "mouse",
+                              );
+                            }}
+                            onTouchStart={(e) => {
+                              if (e.touches.length !== 1) return;
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setResizingColumnId(col.id);
+                              const startSize = Math.min(
+                                maxW,
+                                Math.max(
+                                  minW,
+                                  columnWidths[col.id] ?? col.getSize(),
+                                ),
+                              );
+                              attachPixelColumnResizePointer(
+                                setColumnWidths,
+                                setResizingColumnId,
+                                col.id,
+                                minW,
+                                maxW,
+                                Math.round(e.touches[0]!.clientX),
+                                startSize,
+                                e.view.document,
+                                "touch",
+                              );
+                            }}
+                            className={clsx(
+                              "absolute right-0 top-0 z-20 h-full w-1.5 touch-none select-none",
+                              "cursor-col-resize border-r border-transparent hover:border-accent/80",
+                              resizingColumnId === col.id &&
+                                "border-accent bg-accent/20",
+                            )}
+                          />
+                        ) : null}
+                      </>
+                    )}
+                  </th>
+                );
+              })}
             </tr>
           ))}
         </thead>
@@ -243,16 +443,29 @@ export function DataTable<T>({
                 tabIndex={0}
                 aria-selected={selected}
               >
-                {row.getVisibleCells().map((cell) => (
+                {row.getVisibleCells().map((cell) => {
+                  const isFill = cell.column.id === TABLE_FILL_COLUMN_ID;
+                  const cc = cell.column;
+                  const minW = cc.columnDef.minSize ?? 40;
+                  const maxW = cc.columnDef.maxSize ?? 640;
+                  const rawW = isFill
+                    ? fillWidth
+                    : columnWidths[cc.id] ?? cc.getSize();
+                  const colW = isFill
+                    ? fillWidth
+                    : Math.min(maxW, Math.max(minW, rawW));
+                  return (
                   <td
                     key={cell.id}
                     className={clsx(
-                      "overflow-hidden px-[var(--cell-px)] py-0 text-secondary",
+                      "overflow-hidden py-0 text-secondary",
+                      !isFill && "px-[var(--cell-px)]",
+                      isFill && "p-0",
                       multiSelectCellText && "select-text",
                     )}
                     style={{
-                      width: cell.column.getSize(),
-                      maxWidth: cell.column.getSize(),
+                      width: colW,
+                      maxWidth: colW,
                     }}
                   >
                     {/*
@@ -266,7 +479,8 @@ export function DataTable<T>({
                       )}
                     </div>
                   </td>
-                ))}
+                  );
+                })}
               </tr>
             );
           })}

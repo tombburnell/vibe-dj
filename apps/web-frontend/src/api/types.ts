@@ -51,6 +51,45 @@ export type AmazonLinkCandidate = {
   artist: string | null;
   match_score: number | null;
   price: string | null;
+  /** User-marked bad link; omitted/false for legacy rows. */
+  broken?: boolean;
+};
+
+export type LocalScanMatched = {
+  source_track_id: string;
+  path: string;
+  score: number;
+  title: string;
+  artist: string;
+};
+
+export type LocalScanUnmatched = {
+  path: string;
+  parsed_artist: string | null;
+  parsed_title: string | null;
+  best_score: number;
+  best_source_track_id: string | null;
+  best_source_artist: string | null;
+  best_source_title: string | null;
+  below_threshold: boolean;
+  source_claimed_by_other_file: boolean;
+  /** True when best overall source had a local path before this scan (auto-match only considers rows without one). */
+  best_source_already_has_file?: boolean;
+};
+
+export type LocalScanResult = {
+  matched: LocalScanMatched[];
+  unmatched_files: string[];
+  unmatched_details: LocalScanUnmatched[];
+  skipped_non_audio: number;
+  min_score: number;
+};
+
+export type SetLocalFileResult = {
+  source_track_id: string;
+  path: string;
+  title: string;
+  artist: string;
 };
 
 export type FindAmazonLinksResult = {
@@ -59,6 +98,12 @@ export type FindAmazonLinksResult = {
   skipped_cached_count: number;
   error_count: number;
 };
+
+/** Multisite web search backend for ``findAmazonLinks`` (overrides server env for that request). */
+export type WebSearchProvider = "serper" | "ddg";
+
+/** UI: which link-search action is in progress (``any`` = full-queue find from toolbar). */
+export type LinkSearchSpinTarget = WebSearchProvider | "any" | null;
 
 export type SourceTrack = {
   id: string;

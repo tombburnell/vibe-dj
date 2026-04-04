@@ -1,4 +1,6 @@
-type Props = { rows?: number; cols?: number };
+import type { ReactNode } from "react";
+
+type Props = { rows?: number; cols?: number; topChrome?: ReactNode };
 
 /** Relative bar widths per column so skeleton roughly matches title/artist/time columns. */
 function cellBarWidth(col: number): string {
@@ -11,13 +13,21 @@ function cellBarWidth(col: number): string {
  * body rows use `border-[var(--color-row-divider)]` only — no vertical column lines (those
  * were mistaken for “white” borders when `border-border/50` broke with CSS variables).
  */
-export function TableSkeleton({ rows = 8, cols = 6 }: Props) {
+export function TableSkeleton({ rows = 8, cols = 6, topChrome }: Props) {
   return (
     <div
       className="flex min-h-0 flex-1 flex-col overflow-auto rounded border border-border bg-surface-1 animate-pulse"
       role="status"
       aria-label="Loading table"
     >
+      {topChrome != null ? (
+        <div
+          className="shrink-0 bg-surface-2 px-[var(--cell-px)] py-1 text-[0.65rem] font-semibold uppercase tracking-wide text-muted shadow-sm"
+          role="presentation"
+        >
+          {topChrome}
+        </div>
+      ) : null}
       <div
         className="flex shrink-0 border-b border-border bg-surface-2 shadow-sm"
         style={{ height: "var(--row-h)" }}

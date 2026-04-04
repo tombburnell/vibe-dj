@@ -3,6 +3,10 @@ from __future__ import annotations
 import asyncio
 import os
 
+# Before importing ``track_mapper_api`` (which loads ``apps/api/.env`` unless skipped).
+if "TRACKMAPPER_SKIP_DOTENV" not in os.environ:
+    os.environ["TRACKMAPPER_SKIP_DOTENV"] = "1"
+
 os.environ.setdefault("DATABASE_URL", "sqlite+pysqlite:///:memory:")
 
 import pytest

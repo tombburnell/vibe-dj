@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent } from "react";
+import { SiBrave, SiGoogle } from "react-icons/si";
 
 import { queryKeys } from "@/api/queryKeys";
 import type { MatchCandidate } from "@/api/types";
@@ -8,6 +9,7 @@ import {
   findAmazonLinks,
   importLibrarySnapshot,
   importPlaylistCsv,
+  markSourceLinkBroken,
   matchPick,
   matchReject,
   matchRejectBatch,
@@ -18,17 +20,19 @@ import {
   sourceWishlistBatch,
 } from "@/api/endpoints";
 import type { LibraryTrack } from "@/api/types";
+import type { LinkSearchSpinTarget } from "@/api/types";
 import type { SourceTrack } from "@/api/types";
 import { AppShell } from "@/components/layout/AppShell";
+import { LocalScanFolderTrigger } from "@/components/settings/LocalScanFolderTrigger";
 import { WorkspaceLayout } from "@/components/layout/WorkspaceLayout";
 import { DataTable } from "@/components/tables/DataTable";
 import { buildDownloadTrackColumns } from "@/components/tables/columns/downloadTrackColumns";
 import { buildLibraryTrackColumns } from "@/components/tables/columns/libraryTrackColumns";
 import { buildSourceTrackColumns } from "@/components/tables/columns/sourceTrackColumns";
 import { TableSkeleton } from "@/components/ui/TableSkeleton";
-import { DlFilterSelect, type DlFilter } from "@/components/workspace/DlFilterSelect";
+import type { DlFilter } from "@/components/workspace/DlFilterSelect";
 import { MainViewTabs, type MainView } from "@/components/workspace/MainViewTabs";
-import { SourceMatchCategoryFilter } from "@/components/workspace/SourceMatchCategoryFilter";
+import { SourcesFiltersPopover } from "@/components/workspace/SourcesFiltersPopover";
 import { SecondaryPanel } from "@/components/workspace/SecondaryPanel";
 import { SourceTopMatchContext } from "@/contexts/SourceTopMatchContext";
 import { useLibraryTracks } from "@/hooks/useLibraryTracks";
@@ -66,6 +70,8 @@ export function WorkspacePage() {
   const [matchActionBusy, setMatchActionBusy] = useState(false);
   const [runMatchingBusy, setRunMatchingBusy] = useState(false);
   const [findLinksBusy, setFindLinksBusy] = useState(false);
+  const [linkSearchSpinTarget, setLinkSearchSpinTarget] =
+    useState<LinkSearchSpinTarget>(null);
   const libraryFileRef = useRef<HTMLInputElement>(null);
   const playlistFileRef = useRef<HTMLInputElement>(null);
   const sourceScrollRef = useRef<HTMLDivElement>(null);
@@ -80,6 +86,22 @@ export function WorkspacePage() {
   const sourceColumns = useMemo(() => buildSourceTrackColumns(), []);
   const downloadColumns = useMemo(() => buildDownloadTrackColumns(), []);
   const libraryColumns = useMemo(() => buildLibraryTrackColumns(), []);
+
+  const markAmazonLinkBrokenMutation = useMutation({
+    mutationFn: ({
+      sourceTrackId,
+      url,
+    }: {
+      sourceTrackId: string;
+      url: string;
+    }) => markSourceLinkBroken(sourceTrackId, url, minMatchScore),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.sourceTracks(minMatchScore),
+      });
+    },
+    onError: (e: Error) => showToast(e.message, "error"),
+  });
 
   const filteredSources = useMemo(() => {
     const rows = sourceQuery.data ?? [];
@@ -163,6 +185,26 @@ export function WorkspacePage() {
     () => libraryRows.find((l) => l.id === selectedLibraryId) ?? null,
     [libraryRows, selectedLibraryId],
   );
+
+  /** In-table strip above column headers (same panel as the grid). */
+  const primaryTableTopChrome = useMemo(() => {
+    if (mainView === "sources") {
+      if (selectedSourceIds.length > 1) {
+        return `Source tracks (${selectedSourceIds.length} selected)`;
+      }
+      return `Source tracks (${displaySources.length}/${filteredSources.length})`;
+    }
+    if (mainView === "download") {
+      return `Download queue (${displayDownloadSources.length})`;
+    }
+    return "Library tracks";
+  }, [
+    mainView,
+    selectedSourceIds.length,
+    displaySources.length,
+    filteredSources.length,
+    displayDownloadSources.length,
+  ]);
 
   const matchCandidates = useMatchCandidates(
     mainView === "sources" ? selectedSource : null,
@@ -390,6 +432,7 @@ export function WorkspacePage() {
       return;
     }
     setFindLinksBusy(true);
+    setLinkSearchSpinTarget("any");
     void (async () => {
       try {
         const r = await findAmazonLinks({ source_track_ids: ids, force: false });
@@ -402,11 +445,12 @@ export function WorkspacePage() {
         showToast(err instanceof Error ? err.message : String(err), "error");
       } finally {
         setFindLinksBusy(false);
+        setLinkSearchSpinTarget(null);
       }
     })();
   };
 
-  const runReSearchSelectedDownloads = () => {
+  const runReSearchSelectedDownloads = (web_search_provider: "serper" | "ddg") => {
     const ids = selectedSourceIds.filter((id) =>
       displayDownloadSources.some((s) => s.id === id),
     );
@@ -414,12 +458,18 @@ export function WorkspacePage() {
       showToast("Select one or more Download rows to re-search.", "info");
       return;
     }
+    const label = web_search_provider === "serper" ? "Google (Serper)" : "Brave (ddgs)";
     setFindLinksBusy(true);
+    setLinkSearchSpinTarget(web_search_provider);
     void (async () => {
       try {
-        const r = await findAmazonLinks({ source_track_ids: ids, force: true });
+        const r = await findAmazonLinks({
+          source_track_ids: ids,
+          force: true,
+          web_search_provider,
+        });
         showToast(
-          `Re-search: searched ${r.searched_count}, errors ${r.error_count}`,
+          `Re-search (${label}): searched ${r.searched_count}, errors ${r.error_count}`,
           "info",
         );
         void queryClient.invalidateQueries({ queryKey: ["sourceTracks"] });
@@ -427,6 +477,7 @@ export function WorkspacePage() {
         showToast(err instanceof Error ? err.message : String(err), "error");
       } finally {
         setFindLinksBusy(false);
+        setLinkSearchSpinTarget(null);
       }
     })();
   };
@@ -473,6 +524,10 @@ export function WorkspacePage() {
           >
             Import playlist CSV
           </button>
+          <LocalScanFolderTrigger
+            idleLabel="Folder scan"
+            buttonClassName="rounded border border-border bg-surface-1 px-2 py-1 text-[0.75rem] text-primary hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-60"
+          />
         </>
       }
     >
@@ -482,10 +537,11 @@ export function WorkspacePage() {
             <MainViewTabs value={mainView} onChange={setMainView} />
             {mainView === "sources" ? (
               <>
-                <DlFilterSelect value={dlFilter} onChange={setDlFilter} />
-                <SourceMatchCategoryFilter
-                  value={matchCategoryFilter}
-                  onChange={setMatchCategoryFilter}
+                <SourcesFiltersPopover
+                  dlFilter={dlFilter}
+                  onDlChange={setDlFilter}
+                  matchCategoryFilter={matchCategoryFilter}
+                  onMatchCategoryChange={setMatchCategoryFilter}
                 />
                 <label className="flex items-center gap-1.5 text-[0.75rem] text-secondary">
                   <span className="whitespace-nowrap">Min match</span>
@@ -582,57 +638,55 @@ export function WorkspacePage() {
                     "Find links"
                   )}
                 </button>
-                <button
-                  type="button"
-                  disabled={
-                    findLinksBusy ||
-                    selectedSourceIds.filter((id) =>
-                      displayDownloadSources.some((s) => s.id === id),
-                    ).length === 0
-                  }
-                  className="rounded border border-border bg-surface-1 px-2 py-1 text-[0.75rem] text-primary hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-60"
-                  onClick={() => runReSearchSelectedDownloads()}
+                <div
+                  className="flex items-center gap-0.5"
+                  role="group"
+                  aria-label="Re-search selected tracks"
                 >
-                  Re-search selected
-                </button>
+                  <button
+                    type="button"
+                    disabled={
+                      findLinksBusy ||
+                      selectedSourceIds.filter((id) =>
+                        displayDownloadSources.some((s) => s.id === id),
+                      ).length === 0
+                    }
+                    className="inline-flex items-center justify-center rounded border border-border bg-surface-1 px-1.5 py-1 text-[0.75rem] text-primary hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-60"
+                    title="Re-search selected (Google / Serper)"
+                    aria-label="Re-search selected using Google via Serper"
+                    onClick={() => runReSearchSelectedDownloads("serper")}
+                  >
+                    <SiGoogle className="size-4 shrink-0" aria-hidden />
+                  </button>
+                  <button
+                    type="button"
+                    disabled={
+                      findLinksBusy ||
+                      selectedSourceIds.filter((id) =>
+                        displayDownloadSources.some((s) => s.id === id),
+                      ).length === 0
+                    }
+                    className="inline-flex items-center justify-center rounded border border-border bg-surface-1 px-1.5 py-1 text-[0.75rem] text-primary hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-60"
+                    title="Re-search selected (Brave / ddgs)"
+                    aria-label="Re-search selected using Brave via ddgs"
+                    onClick={() => runReSearchSelectedDownloads("ddg")}
+                  >
+                    <SiBrave className="size-4 shrink-0" aria-hidden />
+                  </button>
+                </div>
               </>
             ) : null}
           </div>
         }
         primary={
-          <div className="flex min-h-0 flex-1 flex-col gap-1">
-            <h2 className="shrink-0 text-[0.7rem] font-semibold uppercase tracking-wide text-muted">
-              {mainView === "sources"
-                ? selectedSourceIds.length > 1
-                  ? `SOURCE TRACKS (${selectedSourceIds.length} selected)`
-                  : `SOURCE TRACKS (${displaySources.length}/${filteredSources.length})`
-                : mainView === "download"
-                  ? "Download queue"
-                  : "Library tracks"}
-            </h2>
-            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-              {primaryLoading ? (
-                <TableSkeleton rows={10} cols={6} />
-              ) : mainView === "sources" ? (
-                <SourceTopMatchContext.Provider value={topMatchCtx}>
-                  <DataTable<SourceTrack>
-                    data={displaySources}
-                    columns={sourceColumns}
-                    getRowId={(r) => r.id}
-                    selectedIds={selectedSourceIds}
-                    scrollContainerRef={sourceScrollRef}
-                    onDisplayRowOrder={onSourceDisplayRowOrder}
-                    onRowClick={(r, e) => {
-                      handleSourceRowClick(r, e);
-                      setSelectedLibraryId(null);
-                    }}
-                    emptyMessage="No source tracks (check API, DL, or match filters)."
-                  />
-                </SourceTopMatchContext.Provider>
-              ) : mainView === "download" ? (
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            {primaryLoading ? (
+              <TableSkeleton rows={10} cols={6} topChrome={primaryTableTopChrome} />
+            ) : mainView === "sources" ? (
+              <SourceTopMatchContext.Provider value={topMatchCtx}>
                 <DataTable<SourceTrack>
-                  data={displayDownloadSources}
-                  columns={downloadColumns}
+                  data={displaySources}
+                  columns={sourceColumns}
                   getRowId={(r) => r.id}
                   selectedIds={selectedSourceIds}
                   scrollContainerRef={sourceScrollRef}
@@ -641,26 +695,43 @@ export function WorkspacePage() {
                     handleSourceRowClick(r, e);
                     setSelectedLibraryId(null);
                   }}
-                  emptyMessage='No Missing tracks yet — in Sources, use "Missing" on rows not in your library.'
+                  emptyMessage="No source tracks (check API, DL, or match filters)."
+                  topChrome={primaryTableTopChrome}
                 />
-              ) : (
-                <DataTable<LibraryTrack>
-                  data={libraryRows}
-                  columns={libraryColumns}
-                  getRowId={(r) => r.id}
-                  selectedId={selectedLibraryId}
-                  onRowClick={(r) => {
-                    setSelectedLibraryId(r.id);
-                    setSelectedSourceIds([]);
-                  }}
-                  emptyMessage="No library tracks."
-                  enableSorting={false}
-                  onNearEnd={libraryQuery.loadMore}
-                  hasMore={libraryQuery.hasMore}
-                  isLoadingMore={libraryQuery.isLoadingMore}
-                />
-              )}
-            </div>
+              </SourceTopMatchContext.Provider>
+            ) : mainView === "download" ? (
+              <DataTable<SourceTrack>
+                data={displayDownloadSources}
+                columns={downloadColumns}
+                getRowId={(r) => r.id}
+                selectedIds={selectedSourceIds}
+                scrollContainerRef={sourceScrollRef}
+                onDisplayRowOrder={onSourceDisplayRowOrder}
+                onRowClick={(r, e) => {
+                  handleSourceRowClick(r, e);
+                  setSelectedLibraryId(null);
+                }}
+                emptyMessage='No Missing tracks yet — in Sources, use "Missing" on rows not in your library.'
+                topChrome={primaryTableTopChrome}
+              />
+            ) : (
+              <DataTable<LibraryTrack>
+                data={libraryRows}
+                columns={libraryColumns}
+                getRowId={(r) => r.id}
+                selectedId={selectedLibraryId}
+                onRowClick={(r) => {
+                  setSelectedLibraryId(r.id);
+                  setSelectedSourceIds([]);
+                }}
+                emptyMessage="No library tracks."
+                enableSorting={false}
+                onNearEnd={libraryQuery.loadMore}
+                hasMore={libraryQuery.hasMore}
+                isLoadingMore={libraryQuery.isLoadingMore}
+                topChrome={primaryTableTopChrome}
+              />
+            )}
           </div>
         }
         secondary={
@@ -676,7 +747,7 @@ export function WorkspacePage() {
             matchActionBusy={matchActionBusy}
             wishlistBusy={wishlistBusy}
             findLinksBusy={findLinksBusy}
-            onFindLinksDisplayed={runFindLinksForDisplayed}
+            linkSearchSpinTarget={linkSearchSpinTarget}
             onReSearchSelectedDownloads={runReSearchSelectedDownloads}
             downloadQueueCount={displayDownloadSources.length}
             onPickSelectedMatches={runPickSelectedMatches}
@@ -730,6 +801,15 @@ export function WorkspacePage() {
             onWishlistSources={(ids, onWishlist) =>
               runWishlistForIds(ids, onWishlist)
             }
+            markAmazonLinkBrokenBusy={markAmazonLinkBrokenMutation.isPending}
+            onMarkAmazonLinkBroken={(url) => {
+              const sid = selectedSource?.id;
+              if (!sid || !url) return;
+              void markAmazonLinkBrokenMutation.mutateAsync({
+                sourceTrackId: sid,
+                url,
+              });
+            }}
           />
         }
       />

@@ -14,7 +14,7 @@ Automate downloading tracks for your DJ collection by comparing Spotify playlist
 
 **Apps:** `apps/api` (FastAPI, `uv sync`) · `apps/web-frontend` (Vite, `npm install && npm run dev` — proxies `/api` to port 8000).
 
-**Docker (Postgres + API + Vite, file watch reload):** from repo root run `docker compose -f docker-compose.local.yml up`. UI at http://localhost:5173, API at http://localhost:8000. DB URL: `postgresql+psycopg://trackmapper:trackmapper@localhost:5432/trackmapper`.
+**Docker (Postgres + API + Vite, file watch reload):** from repo root run `docker compose -f docker-compose.local.yml up`. UI at http://localhost:5173, API at http://localhost:8000. DB URL: `postgresql+psycopg://trackmapper:trackmapper@localhost:5432/trackmapper`. Optional wrapped copy URL: set `SPECIAL_LINK_PREFIX` in `apps/web-frontend/.env` (see `apps/web-frontend/README.md`). With Docker Compose, do not pass an empty `SPECIAL_LINK_PREFIX` into the `web` service or it overrides that file.
 
 ## Features
 

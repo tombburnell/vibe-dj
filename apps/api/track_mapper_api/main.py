@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 
 from fastapi import FastAPI
@@ -26,7 +27,22 @@ def _cors_origins() -> list[str]:
     ]
 
 
+def _configure_track_mapper_logging() -> None:
+    """Uvicorn only configures its own loggers; app ``INFO`` logs would otherwise be dropped."""
+    log = logging.getLogger("track_mapper_api")
+    if log.handlers:
+        return
+    raw = os.environ.get("LOG_LEVEL", "INFO").strip().upper()
+    level = getattr(logging, raw, logging.INFO)
+    log.setLevel(level)
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(levelname)s:%(name)s:%(message)s"))
+    log.addHandler(handler)
+    log.propagate = False
+
+
 def create_app() -> FastAPI:
+    _configure_track_mapper_logging()
     app = FastAPI(
         title="Track Mapper API",
         description="Library import, source playlists, and matching API.",

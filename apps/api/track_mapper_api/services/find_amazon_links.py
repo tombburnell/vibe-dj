@@ -1,4 +1,8 @@
-"""Batch Amazon link discovery for source tracks in the Need (rejected) queue."""
+"""Batch link discovery for source tracks in the Need (rejected) queue.
+
+Uses :class:`MultiSiteWebSearcher` (Tidal / Amazon / SoundCloud via Serper or ``ddgs``). Results are stored in
+existing ``amazon_*`` columns for API/UI compatibility.
+"""
 
 from __future__ import annotations
 
@@ -8,18 +12,20 @@ import os
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from types import SimpleNamespace
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from track_mapper_api.config import MAX_WEB_RESULTS
 from track_mapper_api.models.source import SourceTrack
-from track_mapper_api.services.amazon_music_search import (
-    AmazonMusicSearcher,
-    AmazonSearchResult,
-)
 from track_mapper_api.services.matching import resolve_snapshot_id
 from track_mapper_api.services.source_link_actions import is_source_rejected_for_snapshot
+from track_mapper_api.services.web_search_service import (
+    MultiSiteWebSearcher,
+    WebSearchHit,
+    WebSearchProvider,
+    multisite_repeat_search_url,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -35,46 +41,36 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _best_link_display_title(r: AmazonSearchResult) -> str | None:
-    """Single-line label for the top search result."""
-    pt = (r.page_title or "").strip()
-    if pt:
-        return pt
-    t = (r.title or "").strip()
-    a = (r.artist or "").strip()
-    if t and a:
-        return f"{t} — {a}"
-    if t:
-        return t
-    if a:
-        return a
-    return None
+def _hit_to_candidate_dict(h: WebSearchHit) -> dict:
+    """One JSON row for `amazon_candidates_json` (includes ``broken`` for user overrides)."""
+    return {
+        "url": h.url,
+        "title": h.title or None,
+        # Do not set ``artist`` to ``matched_domain``; UI joins title + artist with " — "
+        # and would show e.g. "… — soundcloud.com".
+        "artist": None,
+        "match_score": float(h.match_score),
+        "price": None,
+        "broken": False,
+    }
 
 
-def _results_to_candidate_dicts(
-    results: list[AmazonSearchResult],
+def _hits_to_candidate_dicts(
+    hits: list[WebSearchHit],
 ) -> tuple[str | None, str | None, list[dict], str | None, float | None]:
-    """Best URL, price, alternates, display title, match score (0–100 scale from searcher)."""
-    with_url = [r for r in results if r.url]
-    if not with_url:
+    """Best URL (pointer), price (none), full ordered hit list, display title, best score (0–100).
+
+    ``amazon_candidates_json`` stores every hit (best first); ``amazon_url`` points at the
+    current chosen URL (normally the first hit's URL).
+    """
+    if not hits:
         return None, None, [], None, None
-    best = with_url[0]
+    best = hits[0]
     best_url = best.url
-    best_price = best.price
-    best_title = _best_link_display_title(best)
+    best_title = (best.title or "").strip() or None
     best_score = float(best.match_score)
-    alts: list[dict] = []
-    for r in with_url[1:]:
-        alts.append(
-            {
-                "url": r.url,
-                "title": r.title,
-                "artist": r.artist,
-                "match_score": r.match_score,
-                "price": r.price,
-            }
-        )
-    return best_url, best_price, alts, best_title, best_score
+    all_rows = [_hit_to_candidate_dict(h) for h in hits]
+    return best_url, None, all_rows, best_title, best_score
 
 
 @dataclass
@@ -91,6 +87,7 @@ async def find_amazon_links_for_user(
     user_id: str,
     source_track_ids: list[uuid.UUID] | None,
     force: bool,
+    web_search_provider: WebSearchProvider | None = None,
 ) -> FindAmazonLinksStats:
     stats = FindAmazonLinksStats()
     snap = await resolve_snapshot_id(db, user_id=user_id, snapshot_id=None)
@@ -114,7 +111,7 @@ async def find_amazon_links_for_user(
         tracks = list(res.scalars().all())
 
     delay = _amazon_search_delay_seconds()
-    searcher = AmazonMusicSearcher()
+    searcher = MultiSiteWebSearcher()
     first_eligible_search = True
 
     for st in tracks:
@@ -136,12 +133,17 @@ async def find_amazon_links_for_user(
             await asyncio.sleep(delay)
         first_eligible_search = False
 
-        stub = SimpleNamespace(title=st.title, artist=st.artist)
         try:
-            results = await asyncio.to_thread(searcher.search_track, stub)
+            query, hits = await asyncio.to_thread(
+                searcher.search,
+                artist=st.artist,
+                track=st.title,
+                max_results=MAX_WEB_RESULTS,
+                web_search_provider=web_search_provider,
+            )
         except Exception as e:
             logger.exception(
-                "find_amazon_links search failed source_track_id=%s: %s",
+                "find_amazon_links web search failed source_track_id=%s: %s",
                 st.id,
                 e,
             )
@@ -153,18 +155,16 @@ async def find_amazon_links_for_user(
             continue
 
         stats.searched_count += 1
-        best_url, best_price, alts, best_title, best_score = _results_to_candidate_dicts(results)
-        st.amazon_search_url = searcher.generate_amazon_link(stub)
+        best_url, _price, candidates_json, best_title, best_score = _hits_to_candidate_dicts(hits)
+        st.amazon_search_url = multisite_repeat_search_url(
+            query, web_search_provider=web_search_provider
+        )
         st.amazon_last_searched_at = _utcnow()
-        st.amazon_candidates_json = alts
+        st.amazon_candidates_json = candidates_json
         if best_url:
             st.amazon_url = best_url
-            st.amazon_price = best_price
-            html_title = await asyncio.to_thread(searcher.fetch_link_page_title, best_url)
-            if isinstance(html_title, str) and html_title.strip():
-                st.amazon_link_title = html_title.strip()
-            else:
-                st.amazon_link_title = best_title
+            st.amazon_price = None
+            st.amazon_link_title = best_title
             st.amazon_link_match_score = best_score
         else:
             st.amazon_url = None
@@ -173,4 +173,12 @@ async def find_amazon_links_for_user(
             st.amazon_link_match_score = None
 
     await db.flush()
+    logger.info(
+        "find_amazon_links user=%s searched=%s skipped_not_need=%s skipped_cached=%s errors=%s",
+        user_id,
+        stats.searched_count,
+        stats.skipped_not_need_count,
+        stats.skipped_cached_count,
+        stats.error_count,
+    )
     return stats

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -58,11 +59,18 @@ class AmazonLinkCandidateOut(BaseModel):
     artist: str | None = None
     match_score: float | None = None
     price: str | None = None
+    broken: bool = False
+
+
+class MarkLinkBrokenIn(BaseModel):
+    url: str = Field(..., min_length=1, max_length=4096)
 
 
 class FindAmazonLinksRequest(BaseModel):
     source_track_ids: list[str] = Field(default_factory=list, max_length=200)
     force: bool = False
+    #: Override env for this request: Serper (Google) vs ``ddgs`` (Brave by default).
+    web_search_provider: Literal["serper", "ddg"] | None = None
 
 
 class FindAmazonLinksOut(BaseModel):
@@ -118,6 +126,64 @@ class SourceWishlistBatchIn(BaseModel):
 class SourceWishlistBatchOut(BaseModel):
     ok: bool = True
     updated_count: int
+
+
+class LocalScanFileIn(BaseModel):
+    path: str = Field(..., min_length=1, max_length=2048)
+
+
+class LocalScanRequest(BaseModel):
+    files: list[LocalScanFileIn] = Field(..., max_length=5000)
+    min_score: float = Field(
+        default=80.0,
+        ge=0.0,
+        le=100.0,
+        description="Minimum rapidfuzz token_sort_ratio (0–100); mirrors legacy download_scanner default.",
+    )
+
+
+class LocalScanMatchedOut(BaseModel):
+    source_track_id: str
+    path: str
+    score: float
+    title: str
+    artist: str
+
+
+class LocalScanUnmatchedOut(BaseModel):
+    path: str
+    parsed_artist: str | None = None
+    parsed_title: str | None = None
+    best_score: float
+    best_source_track_id: str | None = None
+    best_source_artist: str | None = None
+    best_source_title: str | None = None
+    below_threshold: bool
+    source_claimed_by_other_file: bool
+    best_source_already_has_file: bool = False
+
+
+class LocalScanOut(BaseModel):
+    matched: list[LocalScanMatchedOut]
+    unmatched_files: list[str]
+    unmatched_details: list[LocalScanUnmatchedOut]
+    skipped_non_audio: int
+    min_score: float
+
+
+class ClearLocalFileOut(BaseModel):
+    cleared: bool
+
+
+class SetLocalFileIn(BaseModel):
+    path: str = Field(..., min_length=1, max_length=2048)
+
+
+class SetLocalFileOut(BaseModel):
+    source_track_id: str
+    path: str
+    title: str
+    artist: str
 
 
 class LibrarySnapshotImportOut(BaseModel):

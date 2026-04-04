@@ -5,6 +5,7 @@ import { Link } from "react-router-dom";
 import { queryKeys } from "@/api/queryKeys";
 import { deletePlaylist } from "@/api/endpoints";
 import { AppShell } from "@/components/layout/AppShell";
+import { LocalScanFolderTrigger } from "@/components/settings/LocalScanFolderTrigger";
 import { useDensity } from "@/hooks/useDensity";
 import { usePlaylists } from "@/hooks/usePlaylists";
 import { useTheme } from "@/hooks/useTheme";
@@ -69,6 +70,24 @@ export function SettingsPage() {
               className="mt-1 w-full accent-accent"
             />
           </label>
+        </section>
+
+        <section className="space-y-3 rounded border border-border bg-surface-1 p-4">
+          <h2 className="text-[0.8rem] font-medium text-secondary">Local downloads</h2>
+          <p className="text-[0.75rem] text-muted">
+            As soon as you choose a folder, the app scans audio files inside it (by relative path
+            only—no file contents are uploaded) and matches names to source tracks using the same
+            &quot;Artist - Title&quot; style as the legacy CLI scanner. A dialog shows progress and
+            results. Wrong link? Use Clear on the DL column in the workspace.
+          </p>
+          <p className="text-[0.7rem] text-muted">
+            Debug: open DevTools → Console and filter for{" "}
+            <code className="rounded bg-surface-2 px-1">local-scan</code>.
+          </p>
+          <LocalScanFolderTrigger
+            idleLabel="Choose folder to scan"
+            buttonClassName="rounded border border-border bg-surface-2 px-3 py-1.5 text-[0.8125rem] text-primary hover:bg-surface-1 disabled:cursor-not-allowed disabled:opacity-50"
+          />
         </section>
 
         <section className="space-y-3 rounded border border-border bg-surface-1 p-4">

@@ -15,6 +15,8 @@ npm run dev
 
 Vite proxies `/api` → `http://127.0.0.1:8000` (see `vite.config.ts`). Optional: copy `.env.example` to `.env` and set `VITE_API_BASE_URL` if the API is elsewhere.
 
+Optional `SPECIAL_LINK_PREFIX` (or `VITE_SPECIAL_LINK_PREFIX`): when set, the Download view’s Links panel adds a second copy control (prefix + raw URL, no encoding) on **Best link** and **Other links** rows—not on Web search.
+
 ## Build
 
 ```bash

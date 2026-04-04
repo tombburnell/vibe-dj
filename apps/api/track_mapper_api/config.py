@@ -1,7 +1,62 @@
 from __future__ import annotations
 
+import logging
 import os
 from functools import lru_cache
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+_API_ROOT = Path(__file__).resolve().parent.parent
+_ENV_FILE = _API_ROOT / ".env"
+# Tests set ``TRACKMAPPER_SKIP_DOTENV=1`` in ``conftest`` so a developer ``.env`` (e.g. USE_SERPER)
+# does not override stubbed search clients.
+_skip_dotenv = os.environ.get("TRACKMAPPER_SKIP_DOTENV", "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
+if _ENV_FILE.is_file() and not _skip_dotenv:
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        logger.debug(
+            "python-dotenv not installed; skipping %s (install python-dotenv or set env in shell)",
+            _ENV_FILE,
+        )
+    else:
+        load_dotenv(_ENV_FILE, override=False)
+
+
+def _truthy_env(name: str, *, default: bool = False) -> bool:
+    raw = os.environ.get(name, "").strip().lower()
+    if not raw:
+        return default
+    return raw in ("1", "true", "yes", "on")
+
+
+def _positive_int_from_env(name: str, default: int) -> int:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning("Invalid %s=%r (not an integer); using default %s", name, raw, default)
+        return default
+    if value < 1:
+        logger.warning("Invalid %s=%r (must be >= 1); using default %s", name, raw, default)
+        return default
+    return value
+
+
+# Default cap for web/DDG search results; override with MAX_WEB_RESULTS (positive int).
+# Resolved when this module is first imported (restart process to pick up env changes).
+MAX_WEB_RESULTS: int = _positive_int_from_env("MAX_WEB_RESULTS", 10)
+
+# Multi-site web search: Serper (google.serper.dev) vs local ``ddgs`` package.
+USE_SERPER: bool = _truthy_env("USE_SERPER", default=False)
+SERPER_API_KEY: str = os.environ.get("SERPER_API_KEY", "").strip()
 
 
 @lru_cache

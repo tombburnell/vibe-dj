@@ -55,6 +55,8 @@
     --text-table: 0.89375rem;
     --text-src-triple: var(--text-table);
     --table-header-font-size: var(--text-src-triple);
+    /* DataTable thead: topChrome (py-1 + 0.65rem label line) + sort header row (--row-h) */
+    --workspace-primary-thead-height: calc(var(--row-h) + 0.5rem + 0.8125rem);
   }
 
   :root[data-density="compact"] {
@@ -65,6 +67,7 @@
     --text-table: 0.8125rem;
     --text-src-triple: var(--text-table);
     --table-header-font-size: var(--text-src-triple);
+    --workspace-primary-thead-height: calc(var(--row-h) + 0.5rem + 0.8125rem);
   }
 
   :root[data-density="ultra-compact"] {
@@ -75,6 +78,7 @@
     --text-table: 0.75rem;
     --text-src-triple: calc(0.8125rem * 0.8);
     --table-header-font-size: var(--text-src-triple);
+    --workspace-primary-thead-height: calc(var(--row-h) + 0.5rem + 0.8125rem);
   }
 
   body {

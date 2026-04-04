@@ -1,8 +1,10 @@
 import type { ColumnDef } from "@tanstack/react-table";
 
 import type { SourceTrack } from "@/api/types";
+import { LinkSiteIcon } from "@/components/LinkSiteIcon";
 import { formatDurationMs } from "@/lib/formatDuration";
 
+import { DownloadedCell } from "./DownloadedCell";
 import { SortableHeader } from "../SortableHeader";
 
 const PLAYLIST_CHIP_CHARS = 12;
@@ -20,21 +22,24 @@ function BestLinkCell({ row }: { row: { original: SourceTrack } }) {
   const url = s.amazon_url;
   const searched = s.amazon_last_searched_at != null;
   const label =
-    (s.amazon_link_title?.trim() || (url ? "Amazon Music" : "")) || "";
+    (s.amazon_link_title?.trim() || (url ? "Link" : "")) || "";
   const tooltip = s.amazon_link_title?.trim() || url || "";
   const linkClass =
     "min-w-0 max-w-full truncate text-[length:var(--text-src-triple)] leading-none text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent";
   if (url) {
     return (
-      <a
-        href={url}
-        target="_blank"
-        rel="noopener noreferrer"
-        title={tooltip}
-        className={`block ${linkClass}`}
-      >
-        {label}
-      </a>
+      <span className="flex min-w-0 max-w-full items-center gap-1">
+        <LinkSiteIcon url={url} />
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          title={tooltip}
+          className={`min-w-0 flex-1 truncate ${linkClass}`}
+        >
+          {label}
+        </a>
+      </span>
     );
   }
   if (searched) {
@@ -170,7 +175,7 @@ export function buildDownloadTrackColumns(): ColumnDef<SourceTrack>[] {
       header: ({ column }) => (
         <SortableHeader column={column}>DL</SortableHeader>
       ),
-      cell: ({ row }) => (row.original.local_file_path ? "✓" : "—"),
+      cell: ({ row }) => <DownloadedCell row={row} />,
       sortingFn: "basic",
     },
   ];
