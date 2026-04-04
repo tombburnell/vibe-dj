@@ -236,20 +236,21 @@ async def batch_top_match_by_source_id(
     library_snapshot_id: uuid.UUID | None,
     tracks: list[SourceTrack],
     min_score: float = 0.0,
-) -> dict[uuid.UUID, tuple[LibraryTrack | None, float | None, bool, bool]]:
-    """Best library track, score, is_picked, is_rejected (rejected scope excludes fuzzy)."""
+) -> dict[uuid.UUID, tuple[LibraryTrack | None, float | None, bool, bool, bool]]:
+    """lt, score, is_picked, is_rejected, below_minimum (fuzzy best < min_score but candidate exists)."""
+    empty = (None, None, False, False, False)
     if library_snapshot_id is None or not tracks:
-        return {t.id: (None, None, False, False) for t in tracks}
+        return {t.id: empty for t in tracks}
 
     rows = await load_library_rows_for_snapshot(
         db, user_id=user_id, library_snapshot_id=library_snapshot_id
     )
     if not rows:
-        return {t.id: (None, None, False, False) for t in tracks}
+        return {t.id: empty for t in tracks}
 
     index, id_by_rb = _build_index(rows)
     lt_by_id = {r.id: r for r in rows}
-    out: dict[uuid.UUID, tuple[LibraryTrack | None, float | None, bool, bool]] = {}
+    out: dict[uuid.UUID, tuple[LibraryTrack | None, float | None, bool, bool, bool]] = {}
     for st in tracks:
         mode, link = await link_mode_for_source_snapshot(
             db,
@@ -258,24 +259,27 @@ async def batch_top_match_by_source_id(
             library_snapshot_id=library_snapshot_id,
         )
         if mode == "rejected":
-            out[st.id] = (None, None, False, True)
+            out[st.id] = (None, None, False, True, False)
             continue
         if mode == "picked" and link is not None and link.library_track_id is not None:
             lt = lt_by_id.get(link.library_track_id)
             if lt is not None:
-                out[st.id] = (lt, link.confidence, True, False)
+                out[st.id] = (lt, link.confidence, True, False, False)
             else:
-                out[st.id] = (None, None, False, False)
+                out[st.id] = empty
             continue
 
         pairs = pair_scores_for_source(
             st, index, id_by_rb, rows, lt_by_id=lt_by_id
         )
         best = pairs[0] if pairs else (None, None)
-        if best[0] is None or (best[1] is not None and best[1] < min_score):
-            out[st.id] = (None, None, False, False)
+        if best[0] is None:
+            out[st.id] = empty
+        elif best[1] is not None and best[1] < min_score:
+            # UI shows flag only in Best match cell — no track/score payload
+            out[st.id] = (None, None, False, False, True)
         else:
-            out[st.id] = (best[0], best[1], False, False)
+            out[st.id] = (best[0], best[1], False, False, False)
     return out
 
 

@@ -19,6 +19,7 @@ export type TopMatchOverlay = Record<
     top_match_duration_ms: number | null;
     top_match_is_picked: boolean;
     is_rejected_no_match: boolean;
+    top_match_below_minimum: boolean;
   }
 >;
 
@@ -36,6 +37,7 @@ function overlayFromRow(r: SourceTopMatchRow): TopMatchOverlay[string] {
     top_match_duration_ms: r.top_match_duration_ms,
     top_match_is_picked: r.top_match_is_picked,
     is_rejected_no_match: r.is_rejected_no_match,
+    top_match_below_minimum: r.top_match_below_minimum ?? false,
   };
 }
 
@@ -60,6 +62,8 @@ type Options = {
   onFetchError?: (err: Error) => void;
   /** API fuzzy floor 0–1 (default 0.4). */
   minScore?: number;
+  /** When true, skip scroll/resize-driven batch fetches (e.g. while Run matching + bulk refresh runs). */
+  suspendAutoFetch?: boolean;
 };
 
 /**
@@ -74,7 +78,7 @@ export function useVisibleSourceTopMatches(
   rowCount: number,
   options: Options = {},
 ) {
-  const { onFetchError, minScore = 0.4 } = options;
+  const { onFetchError, minScore = 0.4, suspendAutoFetch = false } = options;
   const onFetchErrorRef = useRef(onFetchError);
   onFetchErrorRef.current = onFetchError;
 
@@ -92,7 +96,7 @@ export function useVisibleSourceTopMatches(
 
   const runBatch = useCallback(async () => {
     const el = scrollRef.current;
-    if (!el || !enabled || inFlightRef.current) return;
+    if (!el || !enabled || suspendAutoFetch || inFlightRef.current) return;
 
     inFlightRef.current = true;
     try {
@@ -128,7 +132,7 @@ export function useVisibleSourceTopMatches(
     } finally {
       inFlightRef.current = false;
     }
-  }, [enabled, scrollRef, minScore]);
+  }, [enabled, scrollRef, minScore, suspendAutoFetch]);
 
   /** Merge API top-match rows without clearing the rest of the overlay (e.g. after pick). */
   const applyTopMatchRows = useCallback((rows: SourceTopMatchRow[]) => {
@@ -144,37 +148,45 @@ export function useVisibleSourceTopMatches(
   }, []);
 
   const schedule = useCallback(() => {
+    if (suspendAutoFetch) return;
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => {
       timerRef.current = null;
       void runBatch();
     }, DEBOUNCE_MS);
-  }, [runBatch]);
+  }, [runBatch, suspendAutoFetch]);
 
   useEffect(() => {
-    if (!enabled) return;
+    if (suspendAutoFetch && timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  }, [suspendAutoFetch]);
+
+  useEffect(() => {
+    if (!enabled || suspendAutoFetch) return;
     schedule();
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, [enabled, listFingerprint, schedule]);
+  }, [enabled, listFingerprint, schedule, suspendAutoFetch]);
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || suspendAutoFetch) return;
     const id = requestAnimationFrame(() => schedule());
     return () => cancelAnimationFrame(id);
-  }, [enabled, listFingerprint, schedule]);
+  }, [enabled, listFingerprint, schedule, suspendAutoFetch]);
 
   useEffect(() => {
     const el = scrollRef.current;
-    if (!el || !enabled) return;
+    if (!el || !enabled || suspendAutoFetch) return;
     el.addEventListener("scroll", schedule, { passive: true });
     window.addEventListener("resize", schedule, { passive: true });
     return () => {
       el.removeEventListener("scroll", schedule);
       window.removeEventListener("resize", schedule);
     };
-  }, [enabled, scrollRef, schedule, listFingerprint, rowCount]);
+  }, [enabled, suspendAutoFetch, scrollRef, schedule, listFingerprint, rowCount]);
 
   return { overlay, loadingIds, applyTopMatchRows };
 }

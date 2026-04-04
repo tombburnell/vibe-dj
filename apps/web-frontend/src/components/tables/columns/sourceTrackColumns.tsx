@@ -86,9 +86,11 @@ export function buildSourceTrackColumns(): ColumnDef<SourceTrack>[] {
       accessorFn: (row) =>
         row.is_rejected_no_match
           ? "\0rejected"
-          : row.top_match_score != null
-            ? `${row.top_match_title ?? ""}\t${row.top_match_artist ?? ""}`
-            : "",
+          : row.top_match_below_minimum
+            ? "\0belowmin"
+            : row.top_match_score != null
+              ? `${row.top_match_title ?? ""}\t${row.top_match_artist ?? ""}`
+              : "",
       size: 88,
       minSize: 48,
       maxSize: 560,
@@ -102,6 +104,7 @@ export function buildSourceTrackColumns(): ColumnDef<SourceTrack>[] {
       id: "top_match_score",
       accessorFn: (row) => {
         if (row.is_rejected_no_match) return null;
+        if (row.top_match_below_minimum) return null;
         return row.top_match_score ?? null;
       },
       size: 44,

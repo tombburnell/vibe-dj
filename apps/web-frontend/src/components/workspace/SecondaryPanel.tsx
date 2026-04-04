@@ -19,9 +19,9 @@ type Props = {
   candidatesError: Error | null;
   matchActionBusy: boolean;
   onPickCandidate: (c: MatchCandidate) => void | Promise<void>;
+  onPickTopMatch: () => void | Promise<void>;
   onRejectNoMatch: () => void | Promise<void>;
   onUndoPick: () => void | Promise<void>;
-  onUndoAuto: () => void | Promise<void>;
   onUndoReject: () => void | Promise<void>;
   onPickSelectedMatches: () => void | Promise<void>;
   onRejectSelectedMatches: () => void | Promise<void>;
@@ -38,9 +38,9 @@ export function SecondaryPanel({
   candidatesError,
   matchActionBusy,
   onPickCandidate,
+  onPickTopMatch,
   onRejectNoMatch,
   onUndoPick,
-  onUndoAuto,
   onUndoReject,
   onPickSelectedMatches,
   onRejectSelectedMatches,
@@ -63,7 +63,8 @@ export function SecondaryPanel({
           s.top_match_library_track_id != null &&
           s.top_match_score != null &&
           !s.is_rejected_no_match &&
-          !s.top_match_is_picked,
+          !s.top_match_is_picked &&
+          !s.top_match_below_minimum,
       );
       return (
         <PanelChrome title="Matches">
@@ -109,10 +110,28 @@ export function SecondaryPanel({
 
     const rejected = selectedSource.is_rejected_no_match === true;
     const picked = selectedSource.top_match_is_picked === true;
+    const belowMin = selectedSource.top_match_below_minimum === true;
     const hasTop =
-      selectedSource.top_match_title != null || selectedSource.top_match_score != null;
+      (selectedSource.top_match_title != null || selectedSource.top_match_score != null) &&
+      !belowMin;
     const topId = selectedSource.top_match_library_track_id ?? null;
-    const canUndoAuto = hasTop && !picked && !rejected;
+    const topScore = selectedSource.top_match_score;
+    const canPickTop =
+      hasTop &&
+      !picked &&
+      !rejected &&
+      !belowMin &&
+      topId != null &&
+      topScore != null;
+    const topSectionHeading = rejected
+      ? "No match"
+      : belowMin
+        ? "Best match"
+        : !hasTop
+          ? "Best match"
+          : picked
+            ? "Current match"
+            : "Top candidate";
     const candidatesVisible =
       topId == null ? candidates : candidates.filter((c) => c.id !== topId);
 
@@ -123,9 +142,13 @@ export function SecondaryPanel({
         </p>
 
         <div className="mb-3 space-y-2 rounded border border-border/70 bg-surface-2/50 px-2 py-2 text-[0.7rem] text-[var(--text-table)]">
-          <div className="font-medium text-secondary">Current match</div>
+          <div className="font-medium text-secondary">{topSectionHeading}</div>
           {rejected ? (
             <p className="text-muted">No match (rejected for this library scope).</p>
+          ) : belowMin ? (
+            <p className="text-[0.55rem] leading-tight text-muted">
+              Minimum score not met
+            </p>
           ) : hasTop ? (
             <div>
               <div className="text-primary">
@@ -150,14 +173,26 @@ export function SecondaryPanel({
 
           <div className="flex flex-wrap gap-1.5 pt-1">
             {!rejected ? (
-              <button
-                type="button"
-                disabled={matchActionBusy}
-                className="rounded border border-border/80 bg-surface-1 px-2 py-0.5 text-[0.65rem] text-primary hover:bg-surface-2 disabled:opacity-50"
-                onClick={() => void onRejectNoMatch()}
-              >
-                Reject (no match)
-              </button>
+              <>
+                {canPickTop ? (
+                  <button
+                    type="button"
+                    disabled={matchActionBusy}
+                    className="rounded border border-border/80 bg-surface-1 px-2 py-0.5 text-[0.65rem] text-primary hover:bg-surface-2 disabled:opacity-50"
+                    onClick={() => void onPickTopMatch()}
+                  >
+                    Pick
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  disabled={matchActionBusy}
+                  className="rounded border border-border/80 bg-surface-1 px-2 py-0.5 text-[0.65rem] text-primary hover:bg-surface-2 disabled:opacity-50"
+                  onClick={() => void onRejectNoMatch()}
+                >
+                  Reject (no match)
+                </button>
+              </>
             ) : (
               <button
                 type="button"
@@ -176,16 +211,6 @@ export function SecondaryPanel({
                 onClick={() => void onUndoPick()}
               >
                 Undo pick
-              </button>
-            ) : null}
-            {canUndoAuto ? (
-              <button
-                type="button"
-                disabled={matchActionBusy}
-                className="rounded border border-border/80 bg-surface-1 px-2 py-0.5 text-[0.65rem] text-primary hover:bg-surface-2 disabled:opacity-50"
-                onClick={() => void onUndoAuto()}
-              >
-                Unmatch
               </button>
             ) : null}
           </div>

@@ -38,6 +38,7 @@ export type SourceTopMatchRow = {
   top_match_duration_ms: number | null;
   top_match_is_picked: boolean;
   is_rejected_no_match: boolean;
+  top_match_below_minimum: boolean;
 };
 
 export type SourceTrack = {
@@ -67,4 +68,5 @@ export type SourceTrack = {
   top_match_library_track_id?: string | null;
   top_match_is_picked?: boolean;
   is_rejected_no_match?: boolean;
+  top_match_below_minimum?: boolean;
 };

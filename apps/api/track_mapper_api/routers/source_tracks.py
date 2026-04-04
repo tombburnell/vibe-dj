@@ -154,7 +154,9 @@ async def post_source_top_matches(
     )
     out: list[SourceTopMatchRowOut] = []
     for t in tracks:
-        lt, sc, is_picked, is_rejected = best.get(t.id, (None, None, False, False))
+        lt, sc, is_picked, is_rejected, below_min = best.get(
+            t.id, (None, None, False, False, False)
+        )
         out.append(
             SourceTopMatchRowOut(
                 source_track_id=str(t.id),
@@ -165,6 +167,7 @@ async def post_source_top_matches(
                 top_match_duration_ms=lt.duration_ms if lt else None,
                 top_match_is_picked=is_picked,
                 is_rejected_no_match=is_rejected,
+                top_match_below_minimum=below_min,
             )
         )
     return out

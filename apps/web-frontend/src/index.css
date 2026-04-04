@@ -67,3 +67,24 @@
     font-family: Inter, ui-sans-serif, system-ui, sans-serif;
   }
 }
+
+@layer utilities {
+  @keyframes best-match-skeleton-glow {
+    0%,
+    100% {
+      opacity: 0.58;
+      box-shadow: 0 0 0 0 transparent;
+    }
+    50% {
+      opacity: 0.78;
+      box-shadow:
+        0 0 6px 0 color-mix(in srgb, var(--color-text-muted) 28%, transparent),
+        0 0 12px 0 color-mix(in srgb, var(--color-border) 35%, transparent);
+    }
+  }
+
+  .best-match-skeleton-glow {
+    animation: best-match-skeleton-glow 1.8s ease-in-out infinite;
+    will-change: opacity, box-shadow;
+  }
+}

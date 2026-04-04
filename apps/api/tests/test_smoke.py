@@ -134,6 +134,7 @@ def test_match_run_with_library_and_sources(client: TestClient) -> None:
     assert batch[0]["top_match_is_picked"] is False
     assert batch[0]["is_rejected_no_match"] is False
     assert batch[0]["top_match_library_track_id"] is not None
+    assert batch[0]["top_match_below_minimum"] is False
 
     match = client.post("/api/match/run", json={}).json()
     assert match["library_snapshot_id"] is not None

@@ -38,6 +38,7 @@ class SourceTopMatchRowOut(BaseModel):
     top_match_duration_ms: int | None = None
     top_match_is_picked: bool = False
     is_rejected_no_match: bool = False
+    top_match_below_minimum: bool = False
 
 
 class SourceTopMatchesRequest(BaseModel):

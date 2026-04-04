@@ -7,7 +7,6 @@ import {
   importPlaylistCsv,
   matchPick,
   matchReject,
-  matchUndoAuto,
   matchUndoPick,
   matchUndoReject,
   postSourceTopMatches,
@@ -23,6 +22,7 @@ import { buildSourceTrackColumns } from "@/components/tables/columns/sourceTrack
 import { TableSkeleton } from "@/components/ui/TableSkeleton";
 import { DlFilterSelect, type DlFilter } from "@/components/workspace/DlFilterSelect";
 import { MainViewTabs, type MainView } from "@/components/workspace/MainViewTabs";
+import { SourceMatchCategoryFilter } from "@/components/workspace/SourceMatchCategoryFilter";
 import { SecondaryPanel } from "@/components/workspace/SecondaryPanel";
 import { SourceTopMatchContext } from "@/contexts/SourceTopMatchContext";
 import { useLibraryTracks } from "@/hooks/useLibraryTracks";
@@ -30,6 +30,17 @@ import { useMatchCandidates } from "@/hooks/useMatchCandidates";
 import { useSourceTracks } from "@/hooks/useSourceTracks";
 import { useVisibleSourceTopMatches } from "@/hooks/useVisibleSourceTopMatches";
 import { useToast } from "@/providers/ToastProvider";
+import {
+  defaultSourceMatchCategoryFilter,
+  sourcePassesCategoryFilter,
+  type SourceMatchCategoryFilterState,
+} from "@/lib/sourceMatchCategory";
+
+function filterSourcesByDl(rows: SourceTrack[], dl: DlFilter): SourceTrack[] {
+  if (dl === "downloaded") return rows.filter((s) => Boolean(s.local_file_path));
+  if (dl === "not_downloaded") return rows.filter((s) => !s.local_file_path);
+  return rows;
+}
 
 export function WorkspacePage() {
   const { showToast } = useToast();
@@ -39,10 +50,13 @@ export function WorkspacePage() {
   const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
   const [selectedLibraryId, setSelectedLibraryId] = useState<string | null>(null);
   const [dlFilter, setDlFilter] = useState<DlFilter>("all");
+  const [matchCategoryFilter, setMatchCategoryFilter] =
+    useState<SourceMatchCategoryFilterState>(defaultSourceMatchCategoryFilter);
   const [topMatchEpoch, setTopMatchEpoch] = useState(0);
   const [minMatchScore, setMinMatchScore] = useState(0.4);
   const [matchRefreshEpoch, setMatchRefreshEpoch] = useState(0);
   const [matchActionBusy, setMatchActionBusy] = useState(false);
+  const [runMatchingBusy, setRunMatchingBusy] = useState(false);
   const libraryFileRef = useRef<HTMLInputElement>(null);
   const playlistFileRef = useRef<HTMLInputElement>(null);
   const sourceScrollRef = useRef<HTMLDivElement>(null);
@@ -79,6 +93,7 @@ export function WorkspacePage() {
     {
       onFetchError: (e) => showToast(e.message, "error"),
       minScore: minMatchScore,
+      suspendAutoFetch: runMatchingBusy,
     },
   );
 
@@ -89,6 +104,11 @@ export function WorkspacePage() {
         ...(overlay[s.id] ?? {}),
       })),
     [filteredSources, overlay],
+  );
+
+  const displaySources = useMemo(
+    () => mergedSources.filter((s) => sourcePassesCategoryFilter(s, matchCategoryFilter)),
+    [mergedSources, matchCategoryFilter],
   );
 
   const topMatchCtx = useMemo(
@@ -197,7 +217,8 @@ export function WorkspacePage() {
         s.top_match_library_track_id != null &&
         s.top_match_score != null &&
         !s.is_rejected_no_match &&
-        !s.top_match_is_picked
+        !s.top_match_is_picked &&
+        !s.top_match_below_minimum
       ) {
         targets.push(s);
       }
@@ -237,10 +258,9 @@ export function WorkspacePage() {
   }, [libraryQuery.error, showToast]);
 
   useEffect(() => {
-    setSelectedSourceIds((prev) =>
-      prev.filter((id) => filteredSources.some((s) => s.id === id)),
-    );
-  }, [filteredSources]);
+    const visible = new Set(displaySources.map((s) => s.id));
+    setSelectedSourceIds((prev) => prev.filter((id) => visible.has(id)));
+  }, [displaySources]);
 
   const primaryLoading =
     mainView === "sources"
@@ -254,7 +274,13 @@ export function WorkspacePage() {
           <div className="flex flex-wrap items-center gap-3">
             <MainViewTabs value={mainView} onChange={setMainView} />
             {mainView === "sources" ? (
-              <DlFilterSelect value={dlFilter} onChange={setDlFilter} />
+              <>
+                <DlFilterSelect value={dlFilter} onChange={setDlFilter} />
+                <SourceMatchCategoryFilter
+                  value={matchCategoryFilter}
+                  onChange={setMatchCategoryFilter}
+                />
+              </>
             ) : null}
             <input
               ref={libraryFileRef}
@@ -329,22 +355,45 @@ export function WorkspacePage() {
             </label>
             <button
               type="button"
-              className="rounded border border-border bg-surface-2 px-2 py-1 text-[0.75rem] text-primary hover:bg-surface-1"
+              disabled={runMatchingBusy}
+              aria-busy={runMatchingBusy}
+              className="inline-flex items-center gap-1.5 rounded border border-border bg-surface-2 px-2 py-1 text-[0.75rem] text-primary hover:bg-surface-1 disabled:cursor-not-allowed disabled:opacity-60"
               onClick={async () => {
+                setRunMatchingBusy(true);
                 try {
                   const r = await runMatchJob({});
                   showToast(
                     `Match: ${r.matched_count} auto-linked, ${r.skipped_count} skipped`,
                     "info",
                   );
-                  sourceQuery.refetch();
-                  bumpMatchData();
+                  const rows = sourceQuery.data ?? [];
+                  const ids = filterSourcesByDl(rows, dlFilter).map((s) => s.id);
+                  for (let i = 0; i < ids.length; i += 100) {
+                    const chunk = ids.slice(i, i + 100);
+                    const batch = await postSourceTopMatches(chunk, {
+                      minScore: minMatchScore,
+                    });
+                    applyTopMatchRows(batch);
+                  }
+                  setMatchRefreshEpoch((e) => e + 1);
                 } catch (err) {
                   showToast(err instanceof Error ? err.message : String(err), "error");
+                } finally {
+                  setRunMatchingBusy(false);
                 }
               }}
             >
-              Run matching
+              {runMatchingBusy ? (
+                <>
+                  <span
+                    className="inline-block size-3.5 shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent opacity-80"
+                    aria-hidden
+                  />
+                  <span>Matching…</span>
+                </>
+              ) : (
+                "Run matching"
+              )}
             </button>
           </div>
         }
@@ -359,7 +408,7 @@ export function WorkspacePage() {
               ) : mainView === "sources" ? (
                 <SourceTopMatchContext.Provider value={topMatchCtx}>
                   <DataTable<SourceTrack>
-                    data={mergedSources}
+                    data={displaySources}
                     columns={sourceColumns}
                     getRowId={(r) => r.id}
                     selectedIds={selectedSourceIds}
@@ -369,7 +418,7 @@ export function WorkspacePage() {
                       handleSourceRowClick(r, e);
                       setSelectedLibraryId(null);
                     }}
-                    emptyMessage="No source tracks (check API or DL filter)."
+                    emptyMessage="No source tracks (check API, DL, or match filters)."
                   />
                 </SourceTopMatchContext.Provider>
               ) : (
@@ -412,6 +461,16 @@ export function WorkspacePage() {
                 matchPick(sid, c.id, c.match_score),
               );
             }}
+            onPickTopMatch={() => {
+              const s = selectedSource;
+              if (!s) return;
+              const lid = s.top_match_library_track_id;
+              const sc = s.top_match_score;
+              if (lid == null || sc == null) return;
+              void withMatchActionForSource(s.id, () =>
+                matchPick(s.id, lid, sc),
+              );
+            }}
             onRejectNoMatch={() => {
               const sid = selectedSource?.id;
               if (!sid) return;
@@ -421,11 +480,6 @@ export function WorkspacePage() {
               const sid = selectedSource?.id;
               if (!sid) return;
               void withMatchActionForSource(sid, () => matchUndoPick(sid));
-            }}
-            onUndoAuto={() => {
-              const sid = selectedSource?.id;
-              if (!sid) return;
-              void withMatchActionForSource(sid, () => matchUndoAuto(sid));
             }}
             onUndoReject={() => {
               const sid = selectedSource?.id;

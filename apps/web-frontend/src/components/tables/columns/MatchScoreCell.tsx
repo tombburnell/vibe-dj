@@ -11,7 +11,11 @@ export function MatchScoreCell({ row }: { row: Row<SourceTrack> }) {
 
   if (busy) {
     return (
-      <span className="inline-block h-2 w-6 animate-pulse rounded bg-muted/35" aria-busy />
+      <span
+        className="best-match-skeleton-glow inline-block h-2.5 w-8 rounded bg-surface-2/90"
+        aria-busy="true"
+        aria-label="Loading score"
+      />
     );
   }
 
