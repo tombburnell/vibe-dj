@@ -58,7 +58,27 @@ export function BestMatchCell({ row }: { row: Row<SourceTrack> }) {
 
   if (rejected) {
     return (
-      <span className="text-[0.55rem] leading-none text-muted">No match (rejected)</span>
+      <span
+        className="inline-flex max-w-full items-center gap-1.5 text-[length:var(--text-src-triple,0.8125rem)] leading-snug text-muted"
+        title="Need — acquire / not in library"
+      >
+        <svg
+          className="size-[1.1em] shrink-0 opacity-90"
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
+        >
+          <path d="M12 5v10" />
+          <path d="m7 10 5 5 5-5" />
+          <path d="M5 19h14" />
+        </svg>
+        <span className="min-w-0 font-medium">Need (no library match)</span>
+      </span>
     );
   }
 
@@ -82,7 +102,7 @@ export function BestMatchCell({ row }: { row: Row<SourceTrack> }) {
     <div className="flex min-w-0 flex-col gap-px leading-none">
       <div className="flex min-w-0 items-baseline gap-1.5 text-[0.7rem] leading-[1.2]">
         {picked ? (
-          <span className="shrink-0 text-emerald-500" title="Manually picked">
+          <span className="shrink-0 text-emerald-500" title="Manually matched">
             ✓
           </span>
         ) : null}

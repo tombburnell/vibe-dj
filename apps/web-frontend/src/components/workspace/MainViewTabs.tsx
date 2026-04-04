@@ -1,6 +1,6 @@
 import clsx from "clsx";
 
-export type MainView = "sources" | "library";
+export type MainView = "sources" | "download" | "library";
 
 type Props = {
   value: MainView;
@@ -9,6 +9,7 @@ type Props = {
 
 const tabs: { id: MainView; label: string }[] = [
   { id: "sources", label: "Sources" },
+  { id: "download", label: "Download" },
   { id: "library", label: "Library" },
 ];
 

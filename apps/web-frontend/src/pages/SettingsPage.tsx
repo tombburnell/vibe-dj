@@ -1,6 +1,8 @@
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 
+import { queryKeys } from "@/api/queryKeys";
 import { deletePlaylist } from "@/api/endpoints";
 import { AppShell } from "@/components/layout/AppShell";
 import { useDensity } from "@/hooks/useDensity";
@@ -12,12 +14,21 @@ import { useToast } from "@/providers/ToastProvider";
 import { DensitySelect } from "@/components/layout/DensitySelect";
 
 export function SettingsPage() {
+  const queryClient = useQueryClient();
   const { theme, setTheme } = useTheme();
   const { density, setDensity } = useDensity();
   const { percent, setPercent } = useUiScale();
   const { showToast } = useToast();
   const playlistsQuery = usePlaylists();
   const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const deletePlaylistMutation = useMutation({
+    mutationFn: (playlistId: string) => deletePlaylist(playlistId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.playlists });
+      await queryClient.invalidateQueries({ queryKey: ["sourceTracks"] });
+    },
+  });
 
   return (
     <AppShell>
@@ -102,9 +113,8 @@ export function SettingsPage() {
                       }
                       setDeletingId(p.id);
                       try {
-                        await deletePlaylist(p.id);
+                        await deletePlaylistMutation.mutateAsync(p.id);
                         showToast(`Deleted playlist “${p.name}”`, "info");
-                        await playlistsQuery.refetch();
                       } catch (e) {
                         showToast(
                           e instanceof Error ? e.message : String(e),

@@ -45,6 +45,21 @@ export type SourceTopMatchRow = {
   top_match_below_minimum: boolean;
 };
 
+export type AmazonLinkCandidate = {
+  url: string;
+  title: string | null;
+  artist: string | null;
+  match_score: number | null;
+  price: string | null;
+};
+
+export type FindAmazonLinksResult = {
+  searched_count: number;
+  skipped_not_need_count: number;
+  skipped_cached_count: number;
+  error_count: number;
+};
+
 export type SourceTrack = {
   id: string;
   user_id: string;
@@ -61,6 +76,11 @@ export type SourceTrack = {
   downloaded_at: string | null;
   amazon_url: string | null;
   amazon_search_url: string | null;
+  amazon_price: string | null;
+  amazon_link_title: string | null;
+  amazon_link_match_score: number | null;
+  amazon_last_searched_at: string | null;
+  amazon_candidates: AmazonLinkCandidate[];
   created_at: string;
   updated_at: string;
   /** Best match vs latest library snapshot; null if no library or no candidates. */
@@ -68,7 +88,7 @@ export type SourceTrack = {
   top_match_artist: string | null;
   top_match_score: number | null;
   top_match_duration_ms: number | null;
-  /** From batch overlay only — not set on bare GET /source-tracks. */
+  /** Set on GET /source-tracks (min_score) and on lazy top-matches overlay. */
   top_match_library_track_id?: string | null;
   top_match_is_picked?: boolean;
   is_rejected_no_match?: boolean;

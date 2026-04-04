@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from starlette.testclient import TestClient
 
@@ -120,7 +121,10 @@ def test_match_run_with_library_and_sources(client: TestClient) -> None:
     listed_src = client.get("/api/source-tracks").json()
     assert len(listed_src) == 1
     assert listed_src[0]["playlist_names"] == ["koko_groove"]
-    assert listed_src[0]["top_match_title"] is None
+    # List GET embeds best-match overlay (same rules as POST /top-matches).
+    assert listed_src[0]["top_match_title"] == "Test Song One"
+    assert listed_src[0]["top_match_is_picked"] is False
+    assert listed_src[0]["is_rejected_no_match"] is False
     sid = listed_src[0]["id"]
     batch = client.post(
         "/api/source-tracks/top-matches",
@@ -140,3 +144,168 @@ def test_match_run_with_library_and_sources(client: TestClient) -> None:
     assert match["library_snapshot_id"] is not None
     assert match["skipped_count"] >= 0
     assert match["matched_count"] >= 0
+
+
+def test_wishlist_batch_ignore_and_restore(client: TestClient) -> None:
+    csv_body = (
+        "Song,Artist,Album,Duration,Spotify Track Id\n"
+        "Wishlist Row,Test Artist,ALB,4:00,sp_wl_ignore_1\n"
+    )
+    assert client.post(
+        "/api/playlists/import",
+        files={"file": ("pl.csv", csv_body.encode("utf-8"), "text/csv")},
+        data={"import_source": "chosic_csv"},
+    ).status_code == 200
+    src = client.get("/api/source-tracks").json()
+    assert len(src) == 1
+    sid = src[0]["id"]
+    assert src[0]["on_wishlist"] is True
+
+    r = client.post(
+        "/api/source-tracks/wishlist-batch",
+        json={"source_track_ids": [sid], "on_wishlist": False},
+    )
+    assert r.status_code == 200
+    assert r.json() == {"ok": True, "updated_count": 1}
+
+    src2 = client.get("/api/source-tracks").json()
+    assert len(src2) == 1
+    assert src2[0]["on_wishlist"] is False
+
+    assert (
+        client.post(
+            "/api/source-tracks/wishlist-batch",
+            json={"source_track_ids": [sid], "on_wishlist": True},
+        ).status_code
+        == 200
+    )
+    src3 = client.get("/api/source-tracks").json()
+    assert src3[0]["on_wishlist"] is True
+
+
+def test_match_reject_batch(client: TestClient) -> None:
+    tsv_path = _FIXTURES / "minimal_rekordbox.tsv"
+    assert client.post(
+        "/api/library-snapshots/import",
+        files={"file": ("m.tsv", tsv_path.read_bytes(), "text/tab-separated-values")},
+    ).status_code == 200
+
+    csv_body = (
+        "Song,Artist,Album,Duration,Spotify Track Id\n"
+        "Test Song One,Test Act,ALB,4:30,sp_batch_rej_1\n"
+    )
+    assert client.post(
+        "/api/playlists/import",
+        files={"file": ("pl.csv", csv_body.encode("utf-8"), "text/csv")},
+        data={},
+    ).status_code == 200
+
+    src = client.get("/api/source-tracks").json()
+    assert len(src) == 1
+    sid = src[0]["id"]
+
+    assert client.post("/api/match/run", json={}).status_code == 200
+
+    r = client.post("/api/match/reject/batch", json={"source_track_ids": [sid, sid]})
+    assert r.status_code == 200
+    assert r.json() == {"ok": True, "rejected_count": 1}
+
+    top = client.post(
+        "/api/source-tracks/top-matches",
+        json={"source_track_ids": [sid]},
+    ).json()
+    assert len(top) == 1
+    assert top[0]["is_rejected_no_match"] is True
+
+
+def test_find_amazon_links_no_snapshot(client: TestClient) -> None:
+    r = client.post("/api/source-tracks/find-amazon-links", json={})
+    assert r.status_code == 200
+    j = r.json()
+    assert j["searched_count"] == 0
+    assert j["skipped_not_need_count"] == 0
+    assert j["skipped_cached_count"] == 0
+    assert j["error_count"] == 0
+
+
+def test_find_amazon_links_need_queue_mocked(client: TestClient) -> None:
+    tsv_path = _FIXTURES / "minimal_rekordbox.tsv"
+    assert client.post(
+        "/api/library-snapshots/import",
+        files={"file": ("m.tsv", tsv_path.read_bytes(), "text/tab-separated-values")},
+    ).status_code == 200
+
+    csv_body = (
+        "Song,Artist,Album,Duration,Spotify Track Id\n"
+        "Other Song,Other Act,ALB,4:30,sp_other_1\n"
+    )
+    assert client.post(
+        "/api/playlists/import",
+        files={"file": ("pl.csv", csv_body.encode("utf-8"), "text/csv")},
+        data={},
+    ).status_code == 200
+
+    src = client.get("/api/source-tracks").json()
+    assert len(src) == 1
+    sid = src[0]["id"]
+
+    assert client.post("/api/match/reject", json={"source_track_id": sid}).status_code == 200
+
+    from track_mapper_api.services.amazon_music_search import AmazonSearchResult
+
+    fake = [
+        AmazonSearchResult(
+            title="T1",
+            artist="A1",
+            url="https://music.amazon.com/tracks/abc",
+            price="$0.99",
+            match_score=90.0,
+        ),
+        AmazonSearchResult(
+            title="T2",
+            artist="A2",
+            url="https://music.amazon.com/albums/xyz",
+            price=None,
+            match_score=80.0,
+        ),
+    ]
+
+    with patch("track_mapper_api.services.find_amazon_links.AmazonMusicSearcher") as MS:
+        inst = MS.return_value
+        inst.search_track = MagicMock(return_value=fake)
+        inst.generate_amazon_link = MagicMock(
+            return_value="https://www.amazon.com/s?k=test&i=digital-music"
+        )
+        inst.fetch_link_page_title = MagicMock(
+            return_value="  Stream T1 on Amazon Music  "
+        )
+        r = client.post(
+            "/api/source-tracks/find-amazon-links",
+            json={"source_track_ids": [sid], "force": False},
+        )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["searched_count"] == 1
+    assert body["skipped_not_need_count"] == 0
+
+    src2 = client.get("/api/source-tracks").json()
+    row = src2[0]
+    assert row["amazon_url"] == "https://music.amazon.com/tracks/abc"
+    assert row["amazon_price"] == "$0.99"
+    assert row["amazon_link_title"] == "Stream T1 on Amazon Music"
+    assert row["amazon_link_match_score"] == 90.0
+    assert row["amazon_last_searched_at"] is not None
+    assert len(row["amazon_candidates"]) == 1
+    assert row["amazon_candidates"][0]["url"] == "https://music.amazon.com/albums/xyz"
+
+    with patch("track_mapper_api.services.find_amazon_links.AmazonMusicSearcher") as MS:
+        inst = MS.return_value
+        inst.search_track = MagicMock(return_value=fake)
+        inst.generate_amazon_link = MagicMock(return_value="https://x")
+        inst.fetch_link_page_title = MagicMock(return_value=None)
+        r2 = client.post(
+            "/api/source-tracks/find-amazon-links",
+            json={"source_track_ids": [sid], "force": False},
+        )
+    assert r2.json()["searched_count"] == 0
+    assert r2.json()["skipped_cached_count"] == 1

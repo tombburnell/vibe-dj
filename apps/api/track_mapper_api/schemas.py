@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 
 from pydantic import BaseModel, Field
@@ -51,6 +52,26 @@ class SourceTopMatchesRequest(BaseModel):
     )
 
 
+class AmazonLinkCandidateOut(BaseModel):
+    url: str
+    title: str | None = None
+    artist: str | None = None
+    match_score: float | None = None
+    price: str | None = None
+
+
+class FindAmazonLinksRequest(BaseModel):
+    source_track_ids: list[str] = Field(default_factory=list, max_length=200)
+    force: bool = False
+
+
+class FindAmazonLinksOut(BaseModel):
+    searched_count: int
+    skipped_not_need_count: int
+    skipped_cached_count: int
+    error_count: int
+
+
 class SourceTrackOut(BaseModel):
     id: str
     user_id: str
@@ -67,6 +88,11 @@ class SourceTrackOut(BaseModel):
     downloaded_at: datetime | None = None
     amazon_url: str | None = None
     amazon_search_url: str | None = None
+    amazon_price: str | None = None
+    amazon_link_title: str | None = None
+    amazon_link_match_score: float | None = None
+    amazon_last_searched_at: datetime | None = None
+    amazon_candidates: list[AmazonLinkCandidateOut] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
     # Best fuzzy match vs latest library snapshot (null if no snapshot / no candidates).
@@ -74,6 +100,24 @@ class SourceTrackOut(BaseModel):
     top_match_artist: str | None = None
     top_match_score: float | None = None
     top_match_duration_ms: int | None = None
+    top_match_library_track_id: str | None = None
+    top_match_is_picked: bool = False
+    is_rejected_no_match: bool = False
+    top_match_below_minimum: bool = False
+
+
+class SourceWishlistBatchIn(BaseModel):
+    source_track_ids: list[uuid.UUID] = Field(
+        ...,
+        min_length=1,
+        max_length=100,
+    )
+    on_wishlist: bool
+
+
+class SourceWishlistBatchOut(BaseModel):
+    ok: bool = True
+    updated_count: int
 
 
 class LibrarySnapshotImportOut(BaseModel):

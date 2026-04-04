@@ -226,6 +226,21 @@ async def reject_source_no_match(
     )
 
 
+async def reject_sources_no_match_batch(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    source_track_ids: list[uuid.UUID],
+) -> int:
+    """Reject (no match) for many sources on the latest snapshot. Dedupes IDs; all-or-nothing."""
+    if not source_track_ids:
+        raise HTTPException(status_code=400, detail="source_track_ids must not be empty")
+    unique = list(dict.fromkeys(source_track_ids))
+    for sid in unique:
+        await reject_source_no_match(db, user_id=user_id, source_track_id=sid)
+    return len(unique)
+
+
 async def undo_pick_for_source(
     db: AsyncSession,
     *,

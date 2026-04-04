@@ -1,22 +1,28 @@
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent } from "react";
 
+import { queryKeys } from "@/api/queryKeys";
 import type { MatchCandidate } from "@/api/types";
 import {
+  findAmazonLinks,
   importLibrarySnapshot,
   importPlaylistCsv,
   matchPick,
   matchReject,
+  matchRejectBatch,
   matchUndoPick,
   matchUndoReject,
   postSourceTopMatches,
   runMatchJob,
+  sourceWishlistBatch,
 } from "@/api/endpoints";
 import type { LibraryTrack } from "@/api/types";
 import type { SourceTrack } from "@/api/types";
 import { AppShell } from "@/components/layout/AppShell";
 import { WorkspaceLayout } from "@/components/layout/WorkspaceLayout";
 import { DataTable } from "@/components/tables/DataTable";
+import { buildDownloadTrackColumns } from "@/components/tables/columns/downloadTrackColumns";
 import { buildLibraryTrackColumns } from "@/components/tables/columns/libraryTrackColumns";
 import { buildSourceTrackColumns } from "@/components/tables/columns/sourceTrackColumns";
 import { TableSkeleton } from "@/components/ui/TableSkeleton";
@@ -42,9 +48,13 @@ function filterSourcesByDl(rows: SourceTrack[], dl: DlFilter): SourceTrack[] {
   return rows;
 }
 
+const TOP_MATCH_BATCH_STALE_MS = 5 * 60 * 1000;
+
 export function WorkspacePage() {
   const { showToast } = useToast();
-  const sourceQuery = useSourceTracks();
+  const queryClient = useQueryClient();
+  const [minMatchScore, setMinMatchScore] = useState(0.4);
+  const sourceQuery = useSourceTracks(minMatchScore);
   const libraryQuery = useLibraryTracks();
   const [mainView, setMainView] = useState<MainView>("sources");
   const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
@@ -53,13 +63,13 @@ export function WorkspacePage() {
   const [matchCategoryFilter, setMatchCategoryFilter] =
     useState<SourceMatchCategoryFilterState>(defaultSourceMatchCategoryFilter);
   const [topMatchEpoch, setTopMatchEpoch] = useState(0);
-  const [minMatchScore, setMinMatchScore] = useState(0.4);
-  const [matchRefreshEpoch, setMatchRefreshEpoch] = useState(0);
   const [matchActionBusy, setMatchActionBusy] = useState(false);
   const [runMatchingBusy, setRunMatchingBusy] = useState(false);
+  const [findLinksBusy, setFindLinksBusy] = useState(false);
   const libraryFileRef = useRef<HTMLInputElement>(null);
   const playlistFileRef = useRef<HTMLInputElement>(null);
   const sourceScrollRef = useRef<HTMLDivElement>(null);
+  const mergedSourcesRef = useRef<SourceTrack[]>([]);
   const sourceDisplayOrderRef = useRef<string[]>([]);
   const sourceShiftAnchorRef = useRef<string | null>(null);
 
@@ -68,13 +78,16 @@ export function WorkspacePage() {
   }, []);
 
   const sourceColumns = useMemo(() => buildSourceTrackColumns(), []);
+  const downloadColumns = useMemo(() => buildDownloadTrackColumns(), []);
   const libraryColumns = useMemo(() => buildLibraryTrackColumns(), []);
 
   const filteredSources = useMemo(() => {
     const rows = sourceQuery.data ?? [];
-    if (dlFilter === "downloaded") return rows.filter((s) => Boolean(s.local_file_path));
-    if (dlFilter === "not_downloaded") return rows.filter((s) => !s.local_file_path);
-    return rows;
+    let base = rows;
+    if (dlFilter === "downloaded") base = base.filter((s) => Boolean(s.local_file_path));
+    else if (dlFilter === "not_downloaded")
+      base = base.filter((s) => !s.local_file_path);
+    return base;
   }, [sourceQuery.data, dlFilter]);
 
   const listFingerprint = useMemo(
@@ -85,15 +98,16 @@ export function WorkspacePage() {
 
   const { overlay, loadingIds, applyTopMatchRows } = useVisibleSourceTopMatches(
     sourceScrollRef,
-    mainView === "sources" &&
+    (mainView === "sources" || mainView === "download") &&
       !sourceQuery.isLoading &&
       filteredSources.length > 0,
     listFingerprint,
     filteredSources.length,
+    mergedSourcesRef,
     {
       onFetchError: (e) => showToast(e.message, "error"),
       minScore: minMatchScore,
-      suspendAutoFetch: runMatchingBusy,
+      suspendAutoFetch: runMatchingBusy || findLinksBusy,
     },
   );
 
@@ -105,10 +119,19 @@ export function WorkspacePage() {
       })),
     [filteredSources, overlay],
   );
+  mergedSourcesRef.current = mergedSources;
 
   const displaySources = useMemo(
     () => mergedSources.filter((s) => sourcePassesCategoryFilter(s, matchCategoryFilter)),
     [mergedSources, matchCategoryFilter],
+  );
+
+  const displayDownloadSources = useMemo(
+    () =>
+      mergedSources.filter(
+        (s) => s.is_rejected_no_match === true && s.on_wishlist,
+      ),
+    [mergedSources],
   );
 
   const topMatchCtx = useMemo(
@@ -144,13 +167,85 @@ export function WorkspacePage() {
   const matchCandidates = useMatchCandidates(
     mainView === "sources" ? selectedSource : null,
     minMatchScore,
-    matchRefreshEpoch,
   );
 
-  const bumpMatchData = () => {
+  const bumpMatchData = useCallback(() => {
     setTopMatchEpoch((e) => e + 1);
-    setMatchRefreshEpoch((e) => e + 1);
-  };
+    void queryClient.invalidateQueries({ queryKey: queryKeys.matchCandidatesRoot });
+  }, [queryClient]);
+
+  const importLibraryMutation = useMutation({
+    mutationFn: (file: File) => importLibrarySnapshot(file),
+    onSuccess: (r) => {
+      showToast(`Library import: ${r.track_count} tracks`, "info");
+      void queryClient.invalidateQueries({ queryKey: queryKeys.libraryTracksInfinite });
+      void queryClient.invalidateQueries({ queryKey: ["sourceTracks"] });
+      bumpMatchData();
+    },
+    onError: (err: unknown) => {
+      showToast(err instanceof Error ? err.message : String(err), "error");
+    },
+  });
+
+  const importPlaylistMutation = useMutation({
+    mutationFn: (file: File) => importPlaylistCsv(file),
+    onSuccess: (r) => {
+      showToast(
+        `Playlist: linked ${r.rows_linked}, new sources ${r.new_source_tracks}`,
+        "info",
+      );
+      void queryClient.invalidateQueries({ queryKey: ["sourceTracks"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.playlists });
+    },
+    onError: (err: unknown) => {
+      showToast(err instanceof Error ? err.message : String(err), "error");
+    },
+  });
+
+  const pickMatchMutation = useMutation({
+    mutationFn: (args: {
+      sourceTrackId: string;
+      libraryTrackId: string;
+      matchScore: number | null;
+    }) => matchPick(args.sourceTrackId, args.libraryTrackId, args.matchScore),
+  });
+
+  const rejectMatchMutation = useMutation({
+    mutationFn: (sourceTrackId: string) => matchReject(sourceTrackId),
+  });
+
+  const wishlistBatchMutation = useMutation({
+    mutationFn: (args: { ids: string[]; onWishlist: boolean }) =>
+      sourceWishlistBatch(
+        [...new Set(args.ids)].filter(Boolean).slice(0, 100),
+        args.onWishlist,
+      ),
+    onSuccess: (res, args) => {
+      void queryClient.invalidateQueries({ queryKey: ["sourceTracks"] });
+      if (!args.onWishlist) {
+        setSelectedSourceIds((prev) => prev.filter((id) => !args.ids.includes(id)));
+      }
+      showToast(
+        `${args.onWishlist ? "Restored" : "Ignored"} ${res.updated_count} track(s).`,
+        "info",
+      );
+    },
+    onError: (err: unknown) => {
+      showToast(err instanceof Error ? err.message : String(err), "error");
+    },
+  });
+
+  const undoPickMutation = useMutation({
+    mutationFn: (sourceTrackId: string) => matchUndoPick(sourceTrackId),
+  });
+
+  const undoRejectMutation = useMutation({
+    mutationFn: (sourceTrackId: string) => matchUndoReject(sourceTrackId),
+  });
+
+  const runMatchJobMutation = useMutation({
+    mutationFn: () => runMatchJob({}),
+  });
 
   /** Match mutations: refresh only this source’s overlay + candidates panel (no full table refetch). */
   const withMatchActionForSource = async (
@@ -169,11 +264,15 @@ export function WorkspacePage() {
     try {
       await fn();
       if (uniq.length === 0) return;
-      const rows = await postSourceTopMatches(uniq, {
-        minScore: minMatchScore,
+      const sortedUniq = [...uniq].sort();
+      const rows = await queryClient.fetchQuery({
+        queryKey: queryKeys.topMatchesBatch(minMatchScore, sortedUniq.join(",")),
+        queryFn: () =>
+          postSourceTopMatches(sortedUniq, { minScore: minMatchScore }),
+        staleTime: TOP_MATCH_BATCH_STALE_MS,
       });
       applyTopMatchRows(rows);
-      setMatchRefreshEpoch((e) => e + 1);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.matchCandidatesRoot });
     } catch (err) {
       showToast(err instanceof Error ? err.message : String(err), "error");
     } finally {
@@ -225,28 +324,38 @@ export function WorkspacePage() {
     }
     if (targets.length === 0) {
       showToast(
-        "No eligible rows (need a best match; not rejected or already picked).",
+        "No eligible rows (need a best match ≥ min; skip rows already Need or matched).",
         "info",
       );
       return;
     }
     void withMatchActionForSources(selectedSourceIds, async () => {
       for (const s of targets) {
-        await matchPick(s.id, s.top_match_library_track_id!, s.top_match_score);
+        await pickMatchMutation.mutateAsync({
+          sourceTrackId: s.id,
+          libraryTrackId: s.top_match_library_track_id!,
+          matchScore: s.top_match_score,
+        });
       }
-      showToast(`Picked ${targets.length} match(es).`, "info");
+      showToast(`Matched ${targets.length} track(s).`, "info");
     });
   };
 
   const runRejectSelectedMatches = () => {
     if (selectedSourceIds.length === 0) return;
-    const n = selectedSourceIds.length;
-    void withMatchActionForSources(selectedSourceIds, async () => {
-      for (const sid of selectedSourceIds) {
-        await matchReject(sid);
-      }
-      showToast(`Rejected ${n} track(s).`, "info");
+    const ids = [...new Set(selectedSourceIds)].filter(Boolean).slice(0, 100);
+    void withMatchActionForSources(ids, async () => {
+      const { rejected_count: n } = await matchRejectBatch(ids);
+      showToast(`Marked ${n} track(s) as Need.`, "info");
     });
+  };
+
+  const wishlistBusy = wishlistBatchMutation.isPending;
+
+  const runWishlistForIds = (ids: string[], onWishlist: boolean) => {
+    const u = [...new Set(ids)].filter(Boolean).slice(0, 100);
+    if (u.length === 0) return;
+    void wishlistBatchMutation.mutateAsync({ ids: u, onWishlist });
   };
 
   useEffect(() => {
@@ -258,14 +367,69 @@ export function WorkspacePage() {
   }, [libraryQuery.error, showToast]);
 
   useEffect(() => {
-    const visible = new Set(displaySources.map((s) => s.id));
+    if (mainView === "library") {
+      setSelectedSourceIds([]);
+      return;
+    }
+    const visible =
+      mainView === "download"
+        ? new Set(displayDownloadSources.map((s) => s.id))
+        : new Set(displaySources.map((s) => s.id));
     setSelectedSourceIds((prev) => prev.filter((id) => visible.has(id)));
-  }, [displaySources]);
+  }, [mainView, displaySources, displayDownloadSources]);
 
   const primaryLoading =
-    mainView === "sources"
-      ? sourceQuery.isLoading
-      : libraryQuery.isLoading && libraryQuery.data.length === 0;
+    mainView === "library"
+      ? libraryQuery.isLoading && libraryQuery.data.length === 0
+      : sourceQuery.isLoading;
+
+  const runFindLinksForDisplayed = () => {
+    const ids = displayDownloadSources.map((s) => s.id);
+    if (ids.length === 0) {
+      showToast("No tracks in the Download queue.", "info");
+      return;
+    }
+    setFindLinksBusy(true);
+    void (async () => {
+      try {
+        const r = await findAmazonLinks({ source_track_ids: ids, force: false });
+        showToast(
+          `Find links: searched ${r.searched_count}, skipped cached ${r.skipped_cached_count}, errors ${r.error_count}`,
+          "info",
+        );
+        void queryClient.invalidateQueries({ queryKey: ["sourceTracks"] });
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : String(err), "error");
+      } finally {
+        setFindLinksBusy(false);
+      }
+    })();
+  };
+
+  const runReSearchSelectedDownloads = () => {
+    const ids = selectedSourceIds.filter((id) =>
+      displayDownloadSources.some((s) => s.id === id),
+    );
+    if (ids.length === 0) {
+      showToast("Select one or more Download rows to re-search.", "info");
+      return;
+    }
+    setFindLinksBusy(true);
+    void (async () => {
+      try {
+        const r = await findAmazonLinks({ source_track_ids: ids, force: true });
+        showToast(
+          `Re-search: searched ${r.searched_count}, errors ${r.error_count}`,
+          "info",
+        );
+        void queryClient.invalidateQueries({ queryKey: ["sourceTracks"] });
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : String(err), "error");
+      } finally {
+        setFindLinksBusy(false);
+      }
+    })();
+  };
 
   return (
     <AppShell
@@ -276,18 +440,11 @@ export function WorkspacePage() {
             type="file"
             accept=".tsv,text/tab-separated-values"
             className="hidden"
-            onChange={async (e) => {
+            onChange={(e) => {
               const f = e.target.files?.[0];
               e.target.value = "";
               if (!f) return;
-              try {
-                const r = await importLibrarySnapshot(f);
-                showToast(`Library import: ${r.track_count} tracks`, "info");
-                libraryQuery.refetch();
-                bumpMatchData();
-              } catch (err) {
-                showToast(err instanceof Error ? err.message : String(err), "error");
-              }
+              importLibraryMutation.mutate(f);
             }}
           />
           <button
@@ -302,20 +459,11 @@ export function WorkspacePage() {
             type="file"
             accept=".csv,text/csv"
             className="hidden"
-            onChange={async (e) => {
+            onChange={(e) => {
               const f = e.target.files?.[0];
               e.target.value = "";
               if (!f) return;
-              try {
-                const r = await importPlaylistCsv(f);
-                showToast(
-                  `Playlist: linked ${r.rows_linked}, new sources ${r.new_source_tracks}`,
-                  "info",
-                );
-                sourceQuery.refetch();
-              } catch (err) {
-                showToast(err instanceof Error ? err.message : String(err), "error");
-              }
+              importPlaylistMutation.mutate(f);
             }}
           />
           <button
@@ -364,7 +512,7 @@ export function WorkspacePage() {
                   onClick={async () => {
                     setRunMatchingBusy(true);
                     try {
-                      const r = await runMatchJob({});
+                      const r = await runMatchJobMutation.mutateAsync();
                       showToast(
                         `Match: ${r.matched_count} auto-linked, ${r.skipped_count} skipped`,
                         "info",
@@ -372,13 +520,27 @@ export function WorkspacePage() {
                       const rows = sourceQuery.data ?? [];
                       const ids = filterSourcesByDl(rows, dlFilter).map((s) => s.id);
                       for (let i = 0; i < ids.length; i += 100) {
-                        const chunk = ids.slice(i, i + 100);
-                        const batch = await postSourceTopMatches(chunk, {
-                          minScore: minMatchScore,
+                        const chunk = [...ids.slice(i, i + 100)].sort();
+                        const sortedKey = chunk.join(",");
+                        const batch = await queryClient.fetchQuery({
+                          queryKey: queryKeys.topMatchesBatch(
+                            minMatchScore,
+                            sortedKey,
+                          ),
+                          queryFn: () =>
+                            postSourceTopMatches(chunk, {
+                              minScore: minMatchScore,
+                            }),
+                          staleTime: TOP_MATCH_BATCH_STALE_MS,
                         });
                         applyTopMatchRows(batch);
                       }
-                      setMatchRefreshEpoch((e) => e + 1);
+                      void queryClient.invalidateQueries({
+                        queryKey: ["sourceTracks"],
+                      });
+                      void queryClient.invalidateQueries({
+                        queryKey: queryKeys.matchCandidatesRoot,
+                      });
                     } catch (err) {
                       showToast(err instanceof Error ? err.message : String(err), "error");
                     } finally {
@@ -399,13 +561,54 @@ export function WorkspacePage() {
                   )}
                 </button>
               </>
+            ) : mainView === "download" ? (
+              <>
+                <button
+                  type="button"
+                  disabled={findLinksBusy || displayDownloadSources.length === 0}
+                  aria-busy={findLinksBusy}
+                  className="inline-flex items-center gap-1.5 rounded border border-border bg-surface-2 px-2 py-1 text-[0.75rem] text-primary hover:bg-surface-1 disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={() => runFindLinksForDisplayed()}
+                >
+                  {findLinksBusy ? (
+                    <>
+                      <span
+                        className="inline-block size-3.5 shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent opacity-80"
+                        aria-hidden
+                      />
+                      <span>Finding…</span>
+                    </>
+                  ) : (
+                    "Find links"
+                  )}
+                </button>
+                <button
+                  type="button"
+                  disabled={
+                    findLinksBusy ||
+                    selectedSourceIds.filter((id) =>
+                      displayDownloadSources.some((s) => s.id === id),
+                    ).length === 0
+                  }
+                  className="rounded border border-border bg-surface-1 px-2 py-1 text-[0.75rem] text-primary hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={() => runReSearchSelectedDownloads()}
+                >
+                  Re-search selected
+                </button>
+              </>
             ) : null}
           </div>
         }
         primary={
           <div className="flex min-h-0 flex-1 flex-col gap-1">
             <h2 className="shrink-0 text-[0.7rem] font-semibold uppercase tracking-wide text-muted">
-              {mainView === "sources" ? "Source tracks" : "Library tracks"}
+              {mainView === "sources"
+                ? selectedSourceIds.length > 1
+                  ? `SOURCE TRACKS (${selectedSourceIds.length} selected)`
+                  : `SOURCE TRACKS (${displaySources.length}/${filteredSources.length})`
+                : mainView === "download"
+                  ? "Download queue"
+                  : "Library tracks"}
             </h2>
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
               {primaryLoading ? (
@@ -426,6 +629,20 @@ export function WorkspacePage() {
                     emptyMessage="No source tracks (check API, DL, or match filters)."
                   />
                 </SourceTopMatchContext.Provider>
+              ) : mainView === "download" ? (
+                <DataTable<SourceTrack>
+                  data={displayDownloadSources}
+                  columns={downloadColumns}
+                  getRowId={(r) => r.id}
+                  selectedIds={selectedSourceIds}
+                  scrollContainerRef={sourceScrollRef}
+                  onDisplayRowOrder={onSourceDisplayRowOrder}
+                  onRowClick={(r, e) => {
+                    handleSourceRowClick(r, e);
+                    setSelectedLibraryId(null);
+                  }}
+                  emptyMessage='No Need tracks yet — in Sources, use "Need (no match)" on rows not in your library.'
+                />
               ) : (
                 <DataTable<LibraryTrack>
                   data={libraryRows}
@@ -457,13 +674,22 @@ export function WorkspacePage() {
             candidatesLoading={matchCandidates.isLoading}
             candidatesError={matchCandidates.error}
             matchActionBusy={matchActionBusy}
+            wishlistBusy={wishlistBusy}
+            findLinksBusy={findLinksBusy}
+            onFindLinksDisplayed={runFindLinksForDisplayed}
+            onReSearchSelectedDownloads={runReSearchSelectedDownloads}
+            downloadQueueCount={displayDownloadSources.length}
             onPickSelectedMatches={runPickSelectedMatches}
             onRejectSelectedMatches={runRejectSelectedMatches}
             onPickCandidate={(c: MatchCandidate) => {
               const sid = selectedSource?.id;
               if (!sid) return;
               void withMatchActionForSource(sid, () =>
-                matchPick(sid, c.id, c.match_score),
+                pickMatchMutation.mutateAsync({
+                  sourceTrackId: sid,
+                  libraryTrackId: c.id,
+                  matchScore: c.match_score,
+                }),
               );
             }}
             onPickTopMatch={() => {
@@ -473,24 +699,37 @@ export function WorkspacePage() {
               const sc = s.top_match_score;
               if (lid == null || sc == null) return;
               void withMatchActionForSource(s.id, () =>
-                matchPick(s.id, lid, sc),
+                pickMatchMutation.mutateAsync({
+                  sourceTrackId: s.id,
+                  libraryTrackId: lid,
+                  matchScore: sc,
+                }),
               );
             }}
             onRejectNoMatch={() => {
               const sid = selectedSource?.id;
               if (!sid) return;
-              void withMatchActionForSource(sid, () => matchReject(sid));
+              void withMatchActionForSource(sid, () =>
+                rejectMatchMutation.mutateAsync(sid),
+              );
             }}
             onUndoPick={() => {
               const sid = selectedSource?.id;
               if (!sid) return;
-              void withMatchActionForSource(sid, () => matchUndoPick(sid));
+              void withMatchActionForSource(sid, () =>
+                undoPickMutation.mutateAsync(sid),
+              );
             }}
             onUndoReject={() => {
               const sid = selectedSource?.id;
               if (!sid) return;
-              void withMatchActionForSource(sid, () => matchUndoReject(sid));
+              void withMatchActionForSource(sid, () =>
+                undoRejectMutation.mutateAsync(sid),
+              );
             }}
+            onWishlistSources={(ids, onWishlist) =>
+              runWishlistForIds(ids, onWishlist)
+            }
           />
         }
       />

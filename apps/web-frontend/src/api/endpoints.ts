@@ -1,5 +1,6 @@
 import { apiDelete, apiGet, apiPostFormData, apiPostJson } from "./client";
 import type {
+  FindAmazonLinksResult,
   LibraryTrackPage,
   MatchCandidate,
   Playlist,
@@ -21,8 +22,27 @@ export function fetchLibraryTracksPage(params: {
   return apiGet<LibraryTrackPage>(`/api/library-tracks?${sp.toString()}`);
 }
 
-export function fetchSourceTracks(): Promise<SourceTrack[]> {
-  return apiGet<SourceTrack[]>("/api/source-tracks");
+function normalizeSourceTrack(r: SourceTrack): SourceTrack {
+  return {
+    ...r,
+    amazon_candidates: r.amazon_candidates ?? [],
+    amazon_price: r.amazon_price ?? null,
+    amazon_link_title: r.amazon_link_title ?? null,
+    amazon_link_match_score: r.amazon_link_match_score ?? null,
+    amazon_last_searched_at: r.amazon_last_searched_at ?? null,
+    top_match_library_track_id: r.top_match_library_track_id ?? null,
+    top_match_is_picked: r.top_match_is_picked ?? false,
+    is_rejected_no_match: r.is_rejected_no_match ?? false,
+    top_match_below_minimum: r.top_match_below_minimum ?? false,
+  };
+}
+
+export function fetchSourceTracks(minScore = 0.4): Promise<SourceTrack[]> {
+  const sp = new URLSearchParams();
+  sp.set("min_score", String(minScore));
+  return apiGet<SourceTrack[]>(`/api/source-tracks?${sp.toString()}`).then((rows) =>
+    rows.map((row) => normalizeSourceTrack(row)),
+  );
 }
 
 export function postSourceTopMatches(
@@ -32,6 +52,26 @@ export function postSourceTopMatches(
   return apiPostJson<SourceTopMatchRow[]>("/api/source-tracks/top-matches", {
     source_track_ids: sourceTrackIds.slice(0, 100),
     min_score: options.minScore ?? 0.4,
+  });
+}
+
+export function findAmazonLinks(body: {
+  source_track_ids?: string[];
+  force?: boolean;
+}): Promise<FindAmazonLinksResult> {
+  return apiPostJson<FindAmazonLinksResult>("/api/source-tracks/find-amazon-links", {
+    source_track_ids: body.source_track_ids ?? [],
+    force: body.force ?? false,
+  });
+}
+
+export function sourceWishlistBatch(
+  sourceTrackIds: string[],
+  onWishlist: boolean,
+): Promise<{ ok: boolean; updated_count: number }> {
+  return apiPostJson("/api/source-tracks/wishlist-batch", {
+    source_track_ids: sourceTrackIds,
+    on_wishlist: onWishlist,
   });
 }
 
@@ -69,6 +109,14 @@ export function matchPick(
 export function matchReject(sourceTrackId: string): Promise<{ ok: boolean }> {
   return apiPostJson("/api/match/reject", {
     source_track_id: sourceTrackId,
+  });
+}
+
+export function matchRejectBatch(
+  sourceTrackIds: string[],
+): Promise<{ ok: boolean; rejected_count: number }> {
+  return apiPostJson("/api/match/reject/batch", {
+    source_track_ids: sourceTrackIds,
   });
 }
 

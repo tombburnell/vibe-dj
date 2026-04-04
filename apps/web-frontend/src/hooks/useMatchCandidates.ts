@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 
+import { queryKeys } from "@/api/queryKeys";
 import { fetchMatchCandidates } from "@/api/endpoints";
 import type { MatchCandidate, SourceTrack } from "@/api/types";
 
@@ -10,47 +11,27 @@ export type MatchCandidatesState = {
 };
 
 /**
- * Loads ranked library candidates from `GET /api/source-tracks/:id/candidates`.
+ * Ranked library candidates from `GET /api/source-tracks/:id/candidates`.
+ * Invalidate with `queryClient.invalidateQueries({ queryKey: queryKeys.matchCandidatesRoot })` after match actions.
  */
 export function useMatchCandidates(
   selected: SourceTrack | null,
   minScore = 0.4,
-  refreshEpoch = 0,
 ): MatchCandidatesState {
-  const [data, setData] = useState<MatchCandidate[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<Error | null>(null);
+  const id = selected?.id;
+  const q = useQuery({
+    queryKey: queryKeys.matchCandidates(id ?? "__none__", minScore),
+    queryFn: () => {
+      if (!id) return Promise.resolve([]);
+      return fetchMatchCandidates(id, { minScore });
+    },
+    enabled: Boolean(id),
+    staleTime: 45_000,
+  });
 
-  useEffect(() => {
-    if (!selected) {
-      setData([]);
-      setIsLoading(false);
-      setError(null);
-      return;
-    }
-
-    let cancelled = false;
-    setIsLoading(true);
-    setError(null);
-
-    fetchMatchCandidates(selected.id, { minScore })
-      .then((rows) => {
-        if (!cancelled) {
-          setData(rows);
-          setIsLoading(false);
-        }
-      })
-      .catch((e: unknown) => {
-        if (!cancelled) {
-          setError(e instanceof Error ? e : new Error(String(e)));
-          setIsLoading(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [selected?.id, minScore, refreshEpoch]);
-
-  return { data, isLoading, error };
+  return {
+    data: q.data ?? [],
+    isLoading: Boolean(id) && q.isLoading,
+    error: q.error,
+  };
 }

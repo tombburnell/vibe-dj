@@ -12,6 +12,7 @@ from track_mapper_api.services.matching import run_match_job
 from track_mapper_api.services.source_link_actions import (
     pick_source_library_track,
     reject_source_no_match,
+    reject_sources_no_match_batch,
     undo_auto_match_for_source,
     undo_pick_for_source,
     undo_reject_for_source,
@@ -62,6 +63,20 @@ class MatchPickIn(BaseModel):
 
 class MatchRejectIn(BaseModel):
     source_track_id: str
+
+
+class MatchRejectBatchIn(BaseModel):
+    source_track_ids: list[uuid.UUID] = Field(
+        ...,
+        min_length=1,
+        max_length=100,
+        description="Distinct source rows to mark as no match (Need).",
+    )
+
+
+class MatchRejectBatchOut(BaseModel):
+    ok: bool = True
+    rejected_count: int
 
 
 class MatchActionOkOut(BaseModel):
@@ -117,6 +132,20 @@ async def match_reject(
         raise HTTPException(status_code=400, detail="Invalid source_track_id") from e
     await reject_source_no_match(db, user_id=user_id, source_track_id=sid)
     return MatchActionOkOut()
+
+
+@router.post("/reject/batch", response_model=MatchRejectBatchOut)
+async def match_reject_batch(
+    body: MatchRejectBatchIn,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+) -> MatchRejectBatchOut:
+    n = await reject_sources_no_match_batch(
+        db,
+        user_id=user_id,
+        source_track_ids=list(body.source_track_ids),
+    )
+    return MatchRejectBatchOut(rejected_count=n)
 
 
 @router.delete("/reject/{source_track_id}", response_model=MatchActionOkOut)

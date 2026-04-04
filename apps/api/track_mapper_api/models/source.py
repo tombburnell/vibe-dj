@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import Boolean, DateTime, Integer, String, Text, Uuid
+from sqlalchemy import Boolean, DateTime, Float, Integer, JSON, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from track_mapper_api.models.base import Base
@@ -31,9 +31,12 @@ class SourceTrack(Base):
     amazon_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     amazon_search_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     amazon_price: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    amazon_link_title: Mapped[str | None] = mapped_column(Text, nullable=True)
+    amazon_link_match_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     amazon_last_searched_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    amazon_candidates_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow
     )

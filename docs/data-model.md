@@ -87,8 +87,17 @@ Things the user tracks **outside** the current library import: playlist lines, m
 | `amazon_url` | TEXT NULL | Pluggable providers later — see product spec |
 | `amazon_search_url` | TEXT NULL | |
 | `amazon_price` | TEXT NULL | |
-| `amazon_last_searched_at` | TIMESTAMPTZ NULL | |
+| `amazon_link_title` | TEXT NULL | Display line for the **best** Amazon result (from search metadata). |
+| `amazon_link_match_score` | REAL NULL | Searcher fuzzy score for the best result (same 0–100 scale as `amazon_candidates_json`). |
+| `amazon_last_searched_at` | TIMESTAMPTZ NULL | Set when an Amazon **link search** run finished for this row (hit or miss). |
+| `amazon_candidates_json` | JSONB NULL | Alternate purchase links from the last search: array of `{ url, title?, artist?, match_score?, price? }`. Best URL stays in `amazon_url`. |
 | `created_at` / `updated_at` | TIMESTAMPTZ | |
+
+**Amazon link search (Find links API):**
+
+1. **Eligibility (UI “Need” queue)** — user has **rejected** library match for the current snapshot scope (`source_library_links.decision = rejected` per [`top_level_spec.md`](./top_level_spec.md) §7).
+2. **Skip re-search** — If `amazon_last_searched_at` IS NOT NULL, the job **does not** call external search again unless the client sends **`force: true`** (re-search selected / refresh).
+3. **No URL found** — Still set `amazon_last_searched_at` (and usually empty `amazon_candidates_json`) so repeated batch runs do not hammer providers.
 
 **Semantics:**
 
