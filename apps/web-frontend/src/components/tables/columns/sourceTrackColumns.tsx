@@ -23,7 +23,7 @@ export function buildSourceTrackColumns(): ColumnDef<SourceTrack>[] {
   return [
     {
       accessorKey: "title",
-      size: 108,
+      size: 216,
       minSize: 72,
       maxSize: 560,
       header: ({ column }) => <SortableHeader column={column}>Title</SortableHeader>,
@@ -36,7 +36,7 @@ export function buildSourceTrackColumns(): ColumnDef<SourceTrack>[] {
     },
     {
       accessorKey: "artist",
-      size: 72,
+      size: 144,
       minSize: 48,
       maxSize: 560,
       header: ({ column }) => <SortableHeader column={column}>Artist</SortableHeader>,

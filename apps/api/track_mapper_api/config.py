@@ -75,3 +75,59 @@ def clear_config_cache() -> None:
 
 def get_dev_user_id() -> str:
     return os.environ.get("DEV_USER_ID", "dev-user").strip() or "dev-user"
+
+
+def get_spotify_client_credentials() -> tuple[str, str]:
+    """Client id + secret for Spotify Web API (client-credentials flow).
+
+    ``SPOTIFY_SECRET_KEY`` is accepted as an alias for the client secret for
+    older local env files.
+    """
+    client_id = os.environ.get("SPOTIFY_CLIENT_ID", "").strip()
+    client_secret = (
+        os.environ.get("SPOTIFY_CLIENT_SECRET", "").strip()
+        or os.environ.get("SPOTIFY_SECRET_KEY", "").strip()
+    )
+    if not client_id or not client_secret:
+        raise RuntimeError(
+            "Spotify import requires SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET "
+            "(or SPOTIFY_SECRET_KEY) in the API environment.",
+        )
+    logger.info(
+        "Spotify client credentials resolved (prefixes only): client_id=%s... secret=%s...",
+        client_id[:4],
+        client_secret[:4],
+    )
+    return client_id, client_secret
+
+
+def get_spotify_market() -> str:
+    """ISO 3166-1 alpha-2 country for Spotify Web API ``market`` (client-credentials playlists)."""
+    raw = os.environ.get("SPOTIFY_MARKET", "US").strip().upper()
+    if len(raw) == 2 and raw.isalpha():
+        resolved = raw
+    else:
+        if raw:
+            logger.warning(
+                "Invalid SPOTIFY_MARKET=%r (want two letters, e.g. US); using US",
+                os.environ.get("SPOTIFY_MARKET", ""),
+            )
+        resolved = "US"
+    logger.info("Spotify market resolved: %s", resolved)
+    return resolved
+
+
+def get_spotify_redirect_uri() -> str:
+    """OAuth redirect URI; must match Spotify app settings exactly (and token exchange body)."""
+    raw = os.environ.get("SPOTIFY_REDIRECT_URI", "").strip()
+    if raw:
+        return raw
+    return "http://127.0.0.1:5173/spotify-callback"
+
+
+def get_spotify_client_id_public() -> str:
+    """Public OAuth client id only (no logging; does not require client secret)."""
+    cid = os.environ.get("SPOTIFY_CLIENT_ID", "").strip()
+    if not cid:
+        raise RuntimeError("SPOTIFY_CLIENT_ID is not set in the API environment.")
+    return cid

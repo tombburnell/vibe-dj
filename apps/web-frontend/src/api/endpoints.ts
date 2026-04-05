@@ -243,6 +243,46 @@ export function importPlaylistCsv(
   return apiPostFormData("/api/playlists/import", fd);
 }
 
+export function fetchSpotifyOAuthStatus(): Promise<{
+  connected: boolean;
+  spotify_user_id: string | null;
+}> {
+  return apiGet("/api/integrations/spotify/oauth/status");
+}
+
+export function fetchSpotifyOAuthConfig(): Promise<{
+  client_id: string;
+  redirect_uri: string;
+}> {
+  return apiGet("/api/integrations/spotify/oauth/config");
+}
+
+export function postSpotifyOAuthToken(body: {
+  code: string;
+  code_verifier: string;
+  redirect_uri: string;
+}): Promise<{ ok: boolean }> {
+  return apiPostJson("/api/integrations/spotify/oauth/token", body);
+}
+
+export function disconnectSpotifyOAuth(): Promise<void> {
+  return apiDelete("/api/integrations/spotify/oauth/disconnect");
+}
+
+export function importSpotifyPlaylist(body: {
+  playlist_id_or_url: string;
+  playlist_name?: string | null;
+}): Promise<{ playlist_id: string; rows_linked: number; new_source_tracks: number }> {
+  const trimmed = body.playlist_id_or_url.trim();
+  const payload: { playlist_id_or_url: string; playlist_name?: string } = {
+    playlist_id_or_url: trimmed,
+  };
+  if (body.playlist_name?.trim()) {
+    payload.playlist_name = body.playlist_name.trim();
+  }
+  return apiPostJson("/api/playlists/import-spotify", payload);
+}
+
 export function runMatchJob(body: {
   library_snapshot_id?: string | null;
   min_confidence?: number;

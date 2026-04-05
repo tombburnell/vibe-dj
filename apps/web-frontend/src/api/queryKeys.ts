@@ -14,4 +14,5 @@ export const queryKeys = {
   /** Prefix to drop all cached top-match batches */
   topMatchesBatchesRoot: ["topMatchesBatch"] as const,
   matchCandidatesRoot: ["matchCandidates"] as const,
+  spotifyOAuthStatus: ["spotifyOAuth", "status"] as const,
 } as const;

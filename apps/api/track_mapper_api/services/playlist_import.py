@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import io
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -11,6 +12,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from track_mapper_api.models.playlist import Playlist, source_track_playlists
 from track_mapper_api.models.source import SourceTrack
+
+
+@dataclass(frozen=True)
+class PlaylistTrackInput:
+    title: str
+    artist: str
+    album: str | None = None
+    duration_ms: int | None = None
+    spotify_id: str | None = None
 
 
 async def _source_playlist_link_exists(
@@ -70,37 +80,23 @@ def parse_duration_ms(val: str) -> int | None:
         return None
 
 
-async def import_playlist_csv(
+async def import_playlist_tracks(
     db: AsyncSession,
     *,
     user_id: str,
-    file_bytes: bytes,
-    playlist_name: str | None = None,
-    upload_filename: str | None = None,
-    import_source: str = "chosic_csv",
+    name: str,
+    tracks: list[PlaylistTrackInput],
+    import_source: str,
+    source_kind: str,
 ) -> tuple[uuid.UUID, int, int]:
     """Create playlist, upsert source_tracks (Spotify dedupe), attach M2M.
 
     Returns (playlist_id, rows_attached, new_source_rows).
     """
-    display_name = derive_playlist_display_name(playlist_name, upload_filename)
-    text = file_bytes.decode("utf-8-sig", errors="replace")
-    reader = csv.DictReader(io.StringIO(text))
-    if not reader.fieldnames:
-        pl = Playlist(
-            id=uuid.uuid4(),
-            user_id=user_id,
-            name=display_name,
-            import_source=import_source,
-        )
-        db.add(pl)
-        await db.flush()
-        return pl.id, 0, 0
-
     pl = Playlist(
         id=uuid.uuid4(),
         user_id=user_id,
-        name=display_name,
+        name=name.strip() if name.strip() else "Imported playlist",
         import_source=import_source,
     )
     db.add(pl)
@@ -110,19 +106,14 @@ async def import_playlist_csv(
     attached = 0
     now = datetime.now(timezone.utc)
 
-    for row in reader:
-        title = _get(row, "song", "title", "track", "track_title", "name")
-        artist = _get(row, "artist", "artists")
-        album = _get(row, "album") or None
-        duration_raw = _get(row, "duration", "length", "time")
-        spotify_id = _get(row, "spotify_track_id", "spotify id", "spotify_id", "id") or None
+    for t in tracks:
+        spotify_id = t.spotify_id
         if spotify_id and len(spotify_id) > 64:
             spotify_id = spotify_id[:64]
 
-        if not title and not artist:
+        if not t.title.strip() and not t.artist.strip():
             continue
 
-        duration_ms = parse_duration_ms(duration_raw)
         spotify_url = (
             f"https://open.spotify.com/track/{spotify_id}" if spotify_id else None
         )
@@ -137,15 +128,18 @@ async def import_playlist_csv(
             )
             st = res.scalar_one_or_none()
 
+        title = t.title.strip() or "Unknown Title"
+        artist = t.artist.strip() or "Unknown Artist"
+
         if st is None:
             st = SourceTrack(
                 id=uuid.uuid4(),
                 user_id=user_id,
-                source_kind="playlist_csv",
-                title=title or "Unknown Title",
-                artist=artist or "Unknown Artist",
-                album=album,
-                duration_ms=duration_ms,
+                source_kind=source_kind,
+                title=title,
+                artist=artist,
+                album=t.album,
+                duration_ms=t.duration_ms,
                 spotify_id=spotify_id,
                 spotify_url=spotify_url,
                 on_wishlist=True,
@@ -170,3 +164,63 @@ async def import_playlist_csv(
             attached += 1
 
     return pl.id, attached, new_sources
+
+
+async def import_playlist_csv(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    file_bytes: bytes,
+    playlist_name: str | None = None,
+    upload_filename: str | None = None,
+    import_source: str = "chosic_csv",
+) -> tuple[uuid.UUID, int, int]:
+    """Create playlist, upsert source_tracks (Spotify dedupe), attach M2M.
+
+    Returns (playlist_id, rows_attached, new_source_rows).
+    """
+    display_name = derive_playlist_display_name(playlist_name, upload_filename)
+    text = file_bytes.decode("utf-8-sig", errors="replace")
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        return await import_playlist_tracks(
+            db,
+            user_id=user_id,
+            name=display_name,
+            tracks=[],
+            import_source=import_source,
+            source_kind="playlist_csv",
+        )
+
+    tracks: list[PlaylistTrackInput] = []
+    for row in reader:
+        title = _get(row, "song", "title", "track", "track_title", "name")
+        artist = _get(row, "artist", "artists")
+        album = _get(row, "album") or None
+        duration_raw = _get(row, "duration", "length", "time")
+        spotify_id = _get(row, "spotify_track_id", "spotify id", "spotify_id", "id") or None
+        if spotify_id and len(spotify_id) > 64:
+            spotify_id = spotify_id[:64]
+
+        if not title and not artist:
+            continue
+
+        duration_ms = parse_duration_ms(duration_raw)
+        tracks.append(
+            PlaylistTrackInput(
+                title=title or "",
+                artist=artist or "",
+                album=album,
+                duration_ms=duration_ms,
+                spotify_id=spotify_id,
+            )
+        )
+
+    return await import_playlist_tracks(
+        db,
+        user_id=user_id,
+        name=display_name,
+        tracks=tracks,
+        import_source=import_source,
+        source_kind="playlist_csv",
+    )

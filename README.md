@@ -14,6 +14,8 @@ Automate downloading tracks for your DJ collection by comparing Spotify playlist
 
 **Apps:** `apps/api` (FastAPI, `uv sync`) · `apps/web-frontend` (Vite, `npm install && npm run dev` — proxies `/api` to port 8000).
 
+**Spotify playlist import** uses **OAuth (PKCE)** in the UI: set `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`, and optionally `SPOTIFY_REDIRECT_URI` in `apps/api/.env` (default redirect `http://127.0.0.1:5173/spotify-callback`). The browser loads `client_id` from `GET /api/integrations/spotify/oauth/config`, so **no `VITE_SPOTIFY_CLIENT_ID` is required**. Register the same redirect URL in the Spotify Developer Dashboard. Use **Connect Spotify**, then **Import from Spotify** (import field appears after you connect). See [Feb 2026 Web API migration](https://developer.spotify.com/documentation/web-api/tutorials/february-2026-migration-guide) for dev-mode / quota notes.
+
 **Docker (Postgres + API + Vite, file watch reload):** from repo root run `docker compose -f docker-compose.local.yml up`. UI at http://localhost:5173, API at http://localhost:8000. DB URL: `postgresql+psycopg://trackmapper:trackmapper@localhost:5432/trackmapper`. Optional wrapped copy URL: set `SPECIAL_LINK_PREFIX` in `apps/web-frontend/.env` (see `apps/web-frontend/README.md`). With Docker Compose, do not pass an empty `SPECIAL_LINK_PREFIX` into the `web` service or it overrides that file.
 
 ## Features

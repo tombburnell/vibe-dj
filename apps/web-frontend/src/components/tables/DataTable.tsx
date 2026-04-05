@@ -27,7 +27,14 @@ import type {
 /** Internal column: absorbs remaining panel width so data columns keep fixed px sizes while resizing. */
 const TABLE_FILL_COLUMN_ID = "__tmTableFill";
 
-function attachPixelColumnResizePointer(
+/**
+ * Listen on `window` (capture) so drag keeps working while React re-renders every move
+ * (`setColumnWidths` updates thead/tbody). Listeners on the resize handle’s element are lost when
+ * that DOM node is replaced; `setPointerCapture` does not survive a new node for the same fiber slot.
+ */
+function bindColumnResizeWindowPointerDrag(
+  win: Window,
+  pointerId: number,
   setColumnWidths: Dispatch<SetStateAction<Record<string, number>>>,
   setResizingColumnId: (id: string | null) => void,
   columnId: string,
@@ -35,10 +42,8 @@ function attachPixelColumnResizePointer(
   max: number,
   startClientX: number,
   startSize: number,
-  doc: Document,
-  kind: "mouse" | "touch",
 ) {
-  const onMove = (clientX: number) => {
+  const applyClientX = (clientX: number) => {
     const delta = clientX - startClientX;
     const next = Math.round(Math.min(max, Math.max(min, startSize + delta)));
     setColumnWidths((old) =>
@@ -46,34 +51,27 @@ function attachPixelColumnResizePointer(
     );
   };
 
-  const onMouseMove = (e: MouseEvent) => onMove(e.clientX);
-  const onMouseUp = (e: MouseEvent) => {
-    doc.removeEventListener("mousemove", onMouseMove);
-    doc.removeEventListener("mouseup", onMouseUp);
-    setResizingColumnId(null);
-    onMove(e.clientX);
+  const moveOpts: AddEventListenerOptions = { capture: true, passive: false };
+  const endOpts: AddEventListenerOptions = { capture: true };
+
+  const onMove = (e: PointerEvent) => {
+    if (e.pointerId !== pointerId) return;
+    e.preventDefault();
+    applyClientX(e.clientX);
   };
 
-  const onTouchMove = (e: TouchEvent) => {
-    if (e.cancelable) e.preventDefault();
-    const x = e.touches[0]?.clientX;
-    if (typeof x === "number") onMove(x);
-  };
-  const onTouchEnd = (e: TouchEvent) => {
-    doc.removeEventListener("touchmove", onTouchMove);
-    doc.removeEventListener("touchend", onTouchEnd);
+  const onEnd = (e: PointerEvent) => {
+    if (e.pointerId !== pointerId) return;
+    applyClientX(e.clientX);
+    win.removeEventListener("pointermove", onMove, moveOpts);
+    win.removeEventListener("pointerup", onEnd, endOpts);
+    win.removeEventListener("pointercancel", onEnd, endOpts);
     setResizingColumnId(null);
-    const x = e.changedTouches[0]?.clientX;
-    if (typeof x === "number") onMove(x);
   };
 
-  if (kind === "mouse") {
-    doc.addEventListener("mousemove", onMouseMove);
-    doc.addEventListener("mouseup", onMouseUp);
-  } else {
-    doc.addEventListener("touchmove", onTouchMove, { passive: false });
-    doc.addEventListener("touchend", onTouchEnd);
-  }
+  win.addEventListener("pointermove", onMove, moveOpts);
+  win.addEventListener("pointerup", onEnd, endOpts);
+  win.addEventListener("pointercancel", onEnd, endOpts);
 }
 
 type Props<T> = {
@@ -240,7 +238,15 @@ export function DataTable<T>({
     }
   }, [data.length, hasMore, isLoadingMore, onNearEnd]);
 
-  const leafColCount = table.getVisibleLeafColumns().length;
+  const leafColumns = table.getVisibleLeafColumns();
+  const leafColCount = leafColumns.length;
+  const leafColWidths = leafColumns.map((c) => {
+    if (c.id === TABLE_FILL_COLUMN_ID) return fillWidth;
+    const min = c.columnDef.minSize ?? 40;
+    const max = c.columnDef.maxSize ?? 640;
+    const raw = columnWidths[c.id] ?? c.getSize();
+    return Math.min(max, Math.max(min, raw));
+  });
 
   if (data.length === 0) {
     return (
@@ -275,6 +281,15 @@ export function DataTable<T>({
           tableLayout: "fixed",
         }}
       >
+        {/*
+          Column widths must live on <col> — the first row is often topChrome with one cell spanning
+          all columns; in fixed layout that row otherwise defines the grid and ignores per-th/td widths.
+        */}
+        <colgroup>
+          {leafColumns.map((c, i) => (
+            <col key={c.id} style={{ width: leafColWidths[i] }} />
+          ))}
+        </colgroup>
         <thead className="sticky top-0 z-10 bg-surface-2 shadow-sm">
           {topChrome != null ? (
             <tr>
@@ -294,16 +309,10 @@ export function DataTable<T>({
                 const col = h.column;
                 const minW = col.columnDef.minSize ?? 40;
                 const maxW = col.columnDef.maxSize ?? 640;
-                const rawW = isFill
-                  ? fillWidth
-                  : columnWidths[col.id] ?? col.getSize();
-                const colW = isFill
-                  ? fillWidth
-                  : Math.min(maxW, Math.max(minW, rawW));
                 const showResize =
                   !isFill &&
                   !h.isPlaceholder &&
-                  h.subHeaders.length === 0 &&
+                  h.colSpan === 1 &&
                   (col.columnDef.enableResizing ?? true);
                 return (
                   <th
@@ -317,9 +326,6 @@ export function DataTable<T>({
                     aria-hidden={isFill ? true : undefined}
                     style={{
                       height: "var(--row-h)",
-                      width: colW,
-                      minWidth: colW,
-                      maxWidth: colW,
                     }}
                   >
                     {h.isPlaceholder ? null : (
@@ -337,7 +343,9 @@ export function DataTable<T>({
                             role="separator"
                             aria-orientation="vertical"
                             aria-label={`Resize ${String(col.id)} column`}
-                            onMouseDown={(e) => {
+                            style={{ touchAction: "none" }}
+                            onPointerDown={(e) => {
+                              if (e.button !== 0) return;
                               e.preventDefault();
                               e.stopPropagation();
                               setResizingColumnId(col.id);
@@ -348,7 +356,12 @@ export function DataTable<T>({
                                   columnWidths[col.id] ?? col.getSize(),
                                 ),
                               );
-                              attachPixelColumnResizePointer(
+                              const win =
+                                (e.currentTarget as HTMLElement).ownerDocument
+                                  .defaultView ?? window;
+                              bindColumnResizeWindowPointerDrag(
+                                win,
+                                e.pointerId,
                                 setColumnWidths,
                                 setResizingColumnId,
                                 col.id,
@@ -356,36 +369,10 @@ export function DataTable<T>({
                                 maxW,
                                 e.clientX,
                                 startSize,
-                                e.view.document,
-                                "mouse",
-                              );
-                            }}
-                            onTouchStart={(e) => {
-                              if (e.touches.length !== 1) return;
-                              e.preventDefault();
-                              e.stopPropagation();
-                              setResizingColumnId(col.id);
-                              const startSize = Math.min(
-                                maxW,
-                                Math.max(
-                                  minW,
-                                  columnWidths[col.id] ?? col.getSize(),
-                                ),
-                              );
-                              attachPixelColumnResizePointer(
-                                setColumnWidths,
-                                setResizingColumnId,
-                                col.id,
-                                minW,
-                                maxW,
-                                Math.round(e.touches[0]!.clientX),
-                                startSize,
-                                e.view.document,
-                                "touch",
                               );
                             }}
                             className={clsx(
-                              "absolute right-0 top-0 z-20 h-full w-1.5 touch-none select-none",
+                              "absolute right-0 top-0 z-30 h-full min-w-[12px] touch-none select-none",
                               "cursor-col-resize border-r border-transparent hover:border-accent/80",
                               resizingColumnId === col.id &&
                                 "border-accent bg-accent/20",
@@ -445,15 +432,6 @@ export function DataTable<T>({
               >
                 {row.getVisibleCells().map((cell) => {
                   const isFill = cell.column.id === TABLE_FILL_COLUMN_ID;
-                  const cc = cell.column;
-                  const minW = cc.columnDef.minSize ?? 40;
-                  const maxW = cc.columnDef.maxSize ?? 640;
-                  const rawW = isFill
-                    ? fillWidth
-                    : columnWidths[cc.id] ?? cc.getSize();
-                  const colW = isFill
-                    ? fillWidth
-                    : Math.min(maxW, Math.max(minW, rawW));
                   return (
                   <td
                     key={cell.id}
@@ -463,10 +441,6 @@ export function DataTable<T>({
                       isFill && "p-0",
                       multiSelectCellText && "select-text",
                     )}
-                    style={{
-                      width: colW,
-                      maxWidth: colW,
-                    }}
                   >
                     {/*
                       Row height is fixed (--row-h); padding lives inside this flex box so every

@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent } from "react";
 import { SiBrave, SiGoogle } from "react-icons/si";
@@ -6,9 +6,11 @@ import { SiBrave, SiGoogle } from "react-icons/si";
 import { queryKeys } from "@/api/queryKeys";
 import type { MatchCandidate } from "@/api/types";
 import {
+  fetchSpotifyOAuthStatus,
   findAmazonLinks,
   importLibrarySnapshot,
   importPlaylistCsv,
+  importSpotifyPlaylist,
   markSourceLinkBroken,
   matchPick,
   matchReject,
@@ -21,6 +23,7 @@ import {
 } from "@/api/endpoints";
 import type { LibraryTrack } from "@/api/types";
 import type { LinkSearchSpinTarget } from "@/api/types";
+import type { Playlist } from "@/api/types";
 import type { SourceTrack } from "@/api/types";
 import { AppShell } from "@/components/layout/AppShell";
 import { LocalScanFolderTrigger } from "@/components/settings/LocalScanFolderTrigger";
@@ -32,11 +35,13 @@ import { buildSourceTrackColumns } from "@/components/tables/columns/sourceTrack
 import { TableSkeleton } from "@/components/ui/TableSkeleton";
 import type { DlFilter } from "@/components/workspace/DlFilterSelect";
 import { MainViewTabs, type MainView } from "@/components/workspace/MainViewTabs";
+import { PlaylistFilterDropdown } from "@/components/workspace/PlaylistFilterDropdown";
 import { SourcesFiltersPopover } from "@/components/workspace/SourcesFiltersPopover";
 import { SecondaryPanel } from "@/components/workspace/SecondaryPanel";
 import { SourceTopMatchContext } from "@/contexts/SourceTopMatchContext";
 import { useLibraryTracks } from "@/hooks/useLibraryTracks";
 import { useMatchCandidates } from "@/hooks/useMatchCandidates";
+import { usePlaylists } from "@/hooks/usePlaylists";
 import { useSourceTracks } from "@/hooks/useSourceTracks";
 import { useVisibleSourceTopMatches } from "@/hooks/useVisibleSourceTopMatches";
 import { useToast } from "@/providers/ToastProvider";
@@ -45,11 +50,27 @@ import {
   sourcePassesCategoryFilter,
   type SourceMatchCategoryFilterState,
 } from "@/lib/sourceMatchCategory";
-
 function filterSourcesByDl(rows: SourceTrack[], dl: DlFilter): SourceTrack[] {
   if (dl === "downloaded") return rows.filter((s) => Boolean(s.local_file_path));
   if (dl === "not_downloaded") return rows.filter((s) => !s.local_file_path);
   return rows;
+}
+
+/** Rows in any of the selected playlists (by catalog id → name). Empty selection = no playlist filter. */
+function filterSourcesByPlaylists(
+  rows: SourceTrack[],
+  selectedPlaylistIds: string[],
+  playlists: Playlist[] | null | undefined,
+): SourceTrack[] {
+  if (selectedPlaylistIds.length === 0) return rows;
+  const list = playlists ?? [];
+  const idSet = new Set(selectedPlaylistIds);
+  const names = list.filter((p) => idSet.has(p.id)).map((p) => p.name);
+  if (names.length === 0) return rows;
+  return rows.filter((s) => {
+    const pn = s.playlist_names ?? [];
+    return names.some((n) => pn.includes(n));
+  });
 }
 
 const TOP_MATCH_BATCH_STALE_MS = 5 * 60 * 1000;
@@ -60,12 +81,14 @@ export function WorkspacePage() {
   const [minMatchScore, setMinMatchScore] = useState(0.4);
   const sourceQuery = useSourceTracks(minMatchScore);
   const libraryQuery = useLibraryTracks();
+  const playlistsQuery = usePlaylists();
   const [mainView, setMainView] = useState<MainView>("sources");
   const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
   const [selectedLibraryId, setSelectedLibraryId] = useState<string | null>(null);
   const [dlFilter, setDlFilter] = useState<DlFilter>("all");
   const [matchCategoryFilter, setMatchCategoryFilter] =
     useState<SourceMatchCategoryFilterState>(defaultSourceMatchCategoryFilter);
+  const [selectedPlaylistIds, setSelectedPlaylistIds] = useState<string[]>([]);
   const [topMatchEpoch, setTopMatchEpoch] = useState(0);
   const [matchActionBusy, setMatchActionBusy] = useState(false);
   const [runMatchingBusy, setRunMatchingBusy] = useState(false);
@@ -74,6 +97,13 @@ export function WorkspacePage() {
     useState<LinkSearchSpinTarget>(null);
   const libraryFileRef = useRef<HTMLInputElement>(null);
   const playlistFileRef = useRef<HTMLInputElement>(null);
+  const [spotifyPlaylistInput, setSpotifyPlaylistInput] = useState("");
+  const spotifyStatusQuery = useQuery({
+    queryKey: queryKeys.spotifyOAuthStatus,
+    queryFn: fetchSpotifyOAuthStatus,
+    staleTime: 60_000,
+  });
+  const spotifyConnected = spotifyStatusQuery.data?.connected === true;
   const sourceScrollRef = useRef<HTMLDivElement>(null);
   const mergedSourcesRef = useRef<SourceTrack[]>([]);
   const sourceDisplayOrderRef = useRef<string[]>([]);
@@ -109,8 +139,9 @@ export function WorkspacePage() {
     if (dlFilter === "downloaded") base = base.filter((s) => Boolean(s.local_file_path));
     else if (dlFilter === "not_downloaded")
       base = base.filter((s) => !s.local_file_path);
+    base = filterSourcesByPlaylists(base, selectedPlaylistIds, playlistsQuery.data ?? undefined);
     return base;
-  }, [sourceQuery.data, dlFilter]);
+  }, [sourceQuery.data, dlFilter, selectedPlaylistIds, playlistsQuery.data]);
 
   const listFingerprint = useMemo(
     () =>
@@ -234,6 +265,23 @@ export function WorkspacePage() {
     onSuccess: (r) => {
       showToast(
         `Playlist: linked ${r.rows_linked}, new sources ${r.new_source_tracks}`,
+        "info",
+      );
+      void queryClient.invalidateQueries({ queryKey: ["sourceTracks"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.playlists });
+    },
+    onError: (err: unknown) => {
+      showToast(err instanceof Error ? err.message : String(err), "error");
+    },
+  });
+
+  const importSpotifyPlaylistMutation = useMutation({
+    mutationFn: (playlist_id_or_url: string) =>
+      importSpotifyPlaylist({ playlist_id_or_url }),
+    onSuccess: (r) => {
+      setSpotifyPlaylistInput("");
+      showToast(
+        `Spotify playlist: linked ${r.rows_linked}, new sources ${r.new_source_tracks}`,
         "info",
       );
       void queryClient.invalidateQueries({ queryKey: ["sourceTracks"] });
@@ -409,6 +457,13 @@ export function WorkspacePage() {
   }, [libraryQuery.error, showToast]);
 
   useEffect(() => {
+    const list = playlistsQuery.data;
+    if (list == null) return;
+    const valid = new Set(list.map((p) => p.id));
+    setSelectedPlaylistIds((prev) => prev.filter((id) => valid.has(id)));
+  }, [playlistsQuery.data]);
+
+  useEffect(() => {
     if (mainView === "library") {
       setSelectedSourceIds([]);
       return;
@@ -524,6 +579,39 @@ export function WorkspacePage() {
           >
             Import playlist CSV
           </button>
+          {spotifyConnected ? (
+            <span className="inline-flex max-w-[min(22rem,55vw)] items-center gap-1.5">
+              <input
+                type="text"
+                value={spotifyPlaylistInput}
+                onChange={(e) => setSpotifyPlaylistInput(e.target.value)}
+                placeholder="Spotify playlist URL or id"
+                aria-label="Spotify playlist URL or id"
+                className="min-w-0 flex-1 rounded border border-border/80 bg-surface-1 px-2 py-1 text-[0.75rem] text-primary placeholder:text-secondary"
+                disabled={importSpotifyPlaylistMutation.isPending}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter") return;
+                  const v = spotifyPlaylistInput.trim();
+                  if (!v || importSpotifyPlaylistMutation.isPending) return;
+                  importSpotifyPlaylistMutation.mutate(v);
+                }}
+              />
+              <button
+                type="button"
+                disabled={
+                  !spotifyPlaylistInput.trim() || importSpotifyPlaylistMutation.isPending
+                }
+                className="shrink-0 rounded border border-border bg-surface-1 px-2 py-1 text-[0.75rem] text-primary hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={() => {
+                  const v = spotifyPlaylistInput.trim();
+                  if (!v) return;
+                  importSpotifyPlaylistMutation.mutate(v);
+                }}
+              >
+                Import from Spotify
+              </button>
+            </span>
+          ) : null}
           <LocalScanFolderTrigger
             idleLabel="Folder scan"
             buttonClassName="rounded border border-border bg-surface-1 px-2 py-1 text-[0.75rem] text-primary hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-60"
@@ -535,6 +623,15 @@ export function WorkspacePage() {
         toolbar={
           <div className="flex flex-wrap items-center gap-3">
             <MainViewTabs value={mainView} onChange={setMainView} />
+            {mainView === "sources" || mainView === "download" ? (
+              <PlaylistFilterDropdown
+                playlists={playlistsQuery.data ?? []}
+                selectedIds={selectedPlaylistIds}
+                onSelectedIdsChange={setSelectedPlaylistIds}
+                isLoading={playlistsQuery.isLoading}
+                error={playlistsQuery.error}
+              />
+            ) : null}
             {mainView === "sources" ? (
               <>
                 <SourcesFiltersPopover
@@ -574,7 +671,13 @@ export function WorkspacePage() {
                         "info",
                       );
                       const rows = sourceQuery.data ?? [];
-                      const ids = filterSourcesByDl(rows, dlFilter).map((s) => s.id);
+                      let scoped = filterSourcesByDl(rows, dlFilter);
+                      scoped = filterSourcesByPlaylists(
+                        scoped,
+                        selectedPlaylistIds,
+                        playlistsQuery.data ?? undefined,
+                      );
+                      const ids = scoped.map((s) => s.id);
                       for (let i = 0; i < ids.length; i += 100) {
                         const chunk = [...ids.slice(i, i + 100)].sort();
                         const sortedKey = chunk.join(",");

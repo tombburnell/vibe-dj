@@ -14,6 +14,7 @@ from track_mapper_api.routers import (
     match,
     playlists,
     source_tracks,
+    spotify_oauth,
 )
 
 
@@ -60,6 +61,7 @@ def create_app() -> FastAPI:
     app.include_router(playlists.router, prefix="/api")
     app.include_router(source_tracks.router, prefix="/api")
     app.include_router(match.router, prefix="/api")
+    app.include_router(spotify_oauth.router, prefix="/api")
 
     @app.get("/health")
     def health() -> dict[str, str]:

@@ -197,6 +197,31 @@ class PlaylistImportOut(BaseModel):
     new_source_tracks: int
 
 
+class SpotifyPlaylistImportIn(BaseModel):
+    playlist_id_or_url: str = Field(..., min_length=1, max_length=2048)
+    playlist_name: str | None = Field(None, max_length=512)
+
+
+class SpotifyOAuthTokenIn(BaseModel):
+    code: str = Field(..., min_length=1, max_length=4096)
+    code_verifier: str = Field(..., min_length=43, max_length=128)
+    redirect_uri: str = Field(..., min_length=1, max_length=2048)
+
+
+class SpotifyOAuthTokenOut(BaseModel):
+    ok: bool = True
+
+
+class SpotifyOAuthStatusOut(BaseModel):
+    connected: bool
+    spotify_user_id: str | None = None
+
+
+class SpotifyOAuthConfigOut(BaseModel):
+    client_id: str
+    redirect_uri: str
+
+
 class PlaylistOut(BaseModel):
     id: str
     name: str

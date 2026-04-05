@@ -9,7 +9,7 @@ export function buildLibraryTrackColumns(): ColumnDef<LibraryTrack>[] {
   return [
     {
       accessorKey: "title",
-      size: 72,
+      size: 144,
       minSize: 48,
       maxSize: 560,
       header: ({ column }) => (
@@ -24,7 +24,7 @@ export function buildLibraryTrackColumns(): ColumnDef<LibraryTrack>[] {
     },
     {
       accessorKey: "artist",
-      size: 72,
+      size: 144,
       minSize: 48,
       maxSize: 560,
       header: ({ column }) => (

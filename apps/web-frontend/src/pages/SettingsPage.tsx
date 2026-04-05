@@ -6,6 +6,7 @@ import { queryKeys } from "@/api/queryKeys";
 import { deletePlaylist } from "@/api/endpoints";
 import { AppShell } from "@/components/layout/AppShell";
 import { LocalScanFolderTrigger } from "@/components/settings/LocalScanFolderTrigger";
+import { SpotifyConnectionPanel } from "@/components/settings/SpotifyConnectionPanel";
 import { useDensity } from "@/hooks/useDensity";
 import { usePlaylists } from "@/hooks/usePlaylists";
 import { useTheme } from "@/hooks/useTheme";
@@ -71,6 +72,8 @@ export function SettingsPage() {
             />
           </label>
         </section>
+
+        <SpotifyConnectionPanel />
 
         <section className="space-y-3 rounded border border-border bg-surface-1 p-4">
           <h2 className="text-[0.8rem] font-medium text-secondary">Local downloads</h2>
