@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 
 import { useSettingsModal } from "@/contexts/SettingsModalContext";
+import { useWelcomeModal } from "@/contexts/WelcomeModalContext";
 import { useDensity } from "@/hooks/useDensity";
 import { useTheme } from "@/hooks/useTheme";
 
@@ -16,6 +17,7 @@ export function AppHeader({ menuExtra }: AppHeaderProps) {
   const { theme, toggle } = useTheme();
   const { density, setDensity } = useDensity();
   const { openSettings } = useSettingsModal();
+  const { openWelcomeModal } = useWelcomeModal();
 
   return (
     <header className="flex min-h-11 shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-border bg-surface-2 px-3 py-1.5 sm:py-0">
@@ -33,6 +35,13 @@ export function AppHeader({ menuExtra }: AppHeaderProps) {
         ) : null}
       </div>
       <div className="flex items-center gap-3">
+        <button
+          type="button"
+          className="header-action-surface px-2 py-1 text-[0.75rem] text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+          onClick={() => openWelcomeModal("help")}
+        >
+          Help
+        </button>
         <button
           type="button"
           className="header-action-surface px-2 py-1 text-[0.75rem] text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
