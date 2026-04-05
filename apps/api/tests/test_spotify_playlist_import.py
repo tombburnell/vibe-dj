@@ -98,6 +98,47 @@ def test_import_spotify_playlist_mocked(client: TestClient) -> None:
     assert pls[0]["import_source"] == "spotify_web_api"
 
 
+def test_import_spotify_playlist_twice_reuses_one_playlist(client: TestClient) -> None:
+    bundle = SpotifyPlaylistBundle(
+        playlist_name="API Mix",
+        tracks=[
+            SpotifyTrackRow(
+                spotify_id="tr1",
+                title="One",
+                artist="Artist A",
+                album="Alb",
+                duration_ms=180000,
+            ),
+        ],
+    )
+    with (
+        patch(
+            "track_mapper_api.services.spotify_playlist_import.get_spotify_user_access_token",
+            new_callable=AsyncMock,
+            return_value="user-access-token",
+        ),
+        patch(
+            "track_mapper_api.services.spotify_playlist_import.fetch_playlist_tracks",
+            return_value=bundle,
+        ),
+    ):
+        r1 = client.post(
+            "/api/playlists/import-spotify",
+            json={"playlist_id_or_url": "37i9dQZF1DXcBWIGoYBM5M"},
+        )
+        r2 = client.post(
+            "/api/playlists/import-spotify",
+            json={"playlist_id_or_url": "37i9dQZF1DXcBWIGoYBM5M"},
+        )
+    assert r1.status_code == 200
+    assert r2.status_code == 200
+    assert r1.json()["playlist_id"] == r2.json()["playlist_id"]
+    assert r2.json()["rows_linked"] == 0
+    assert r2.json()["new_source_tracks"] == 0
+    pls = client.get("/api/playlists").json()
+    assert len(pls) == 1
+
+
 def test_import_spotify_not_connected(client: TestClient) -> None:
     with patch(
         "track_mapper_api.services.spotify_playlist_import.get_spotify_user_access_token",

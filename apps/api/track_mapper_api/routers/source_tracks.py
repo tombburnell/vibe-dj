@@ -50,7 +50,7 @@ from track_mapper_api.services.source_track_wishlist import set_wishlist_batch
 router = APIRouter(prefix="/source-tracks", tags=["source-tracks"])
 
 # Legacy rows stored ``matched_domain`` in ``artist``; UI joins title + artist with " — ".
-_KNOWN_SITE_ARTIST_PLACEHOLDERS = frozenset({"amazon.com", "soundcloud.com", "tidal.com"})
+_KNOWN_SITE_ARTIST_PLACEHOLDERS = frozenset({"amazon.com", "soundcloud.com", "tidal.com", "beatport.com"})
 
 
 def _amazon_candidates_from_db(
@@ -98,33 +98,43 @@ def _amazon_candidates_from_db(
     return out
 
 
-async def _playlist_names_for_sources(
+async def _playlist_membership_for_sources(
     db: AsyncSession,
     *,
     user_id: str,
     source_ids: list[uuid.UUID],
-) -> dict[uuid.UUID, list[str]]:
-    """M2M playlist names per source (explicit query; avoids async ORM collection edge cases)."""
+) -> tuple[dict[uuid.UUID, list[str]], dict[uuid.UUID, list[str]]]:
+    """M2M playlist names and ids per source (explicit query; names sorted for stable order)."""
     if not source_ids:
-        return {}
+        return {}, {}
+    id_set = set(source_ids)
     res = await db.execute(
-        select(source_track_playlists.c.source_track_id, Playlist.name)
+        select(source_track_playlists.c.source_track_id, Playlist.id, Playlist.name)
         .join(Playlist, Playlist.id == source_track_playlists.c.playlist_id)
         .where(
             Playlist.user_id == user_id,
             source_track_playlists.c.source_track_id.in_(source_ids),
         )
     )
-    buckets: dict[uuid.UUID, set[str]] = {sid: set() for sid in source_ids}
-    for st_id, pl_name in res.all():
-        if st_id in buckets:
-            buckets[st_id].add(pl_name)
-    return {sid: sorted(names) for sid, names in buckets.items()}
+    pairs_by: dict[uuid.UUID, list[tuple[uuid.UUID, str]]] = {}
+    for st_id, pl_id, pl_name in res.all():
+        if st_id not in id_set:
+            continue
+        pairs_by.setdefault(st_id, []).append((pl_id, pl_name))
+
+    names_by: dict[uuid.UUID, list[str]] = {}
+    ids_by: dict[uuid.UUID, list[str]] = {}
+    for sid in source_ids:
+        pairs = sorted(pairs_by.get(sid, []), key=lambda x: (x[1], str(x[0])))
+        names_by[sid] = [p[1] for p in pairs]
+        ids_by[sid] = [str(p[0]) for p in pairs]
+    return names_by, ids_by
 
 
 def _st_out(
     st: SourceTrack,
     playlist_names: list[str],
+    playlist_ids: list[str],
     *,
     lt: LibraryTrack | None = None,
     sc: float | None = None,
@@ -145,6 +155,7 @@ def _st_out(
         spotify_url=st.spotify_url,
         on_wishlist=st.on_wishlist,
         playlist_names=playlist_names,
+        playlist_ids=playlist_ids,
         local_file_path=st.local_file_path,
         downloaded_at=st.downloaded_at,
         amazon_url=st.amazon_url,
@@ -174,7 +185,7 @@ async def _source_track_out_one(
     st: SourceTrack,
     min_score: float,
 ) -> SourceTrackOut:
-    names_by_source = await _playlist_names_for_sources(
+    names_by_source, ids_by_source = await _playlist_membership_for_sources(
         db, user_id=user_id, source_ids=[st.id]
     )
     snap = await resolve_snapshot_id(db, user_id=user_id, snapshot_id=None)
@@ -192,6 +203,7 @@ async def _source_track_out_one(
     return _st_out(
         st,
         names_by_source.get(st.id, []),
+        ids_by_source.get(st.id, []),
         lt=lt,
         sc=sc,
         top_match_library_track_id=lid,
@@ -236,7 +248,7 @@ async def list_source_tracks(
     )
     tracks = list(result.scalars().all())
     source_ids = [t.id for t in tracks]
-    names_by_source = await _playlist_names_for_sources(
+    names_by_source, ids_by_source = await _playlist_membership_for_sources(
         db, user_id=user_id, source_ids=source_ids
     )
     snap = await resolve_snapshot_id(db, user_id=user_id, snapshot_id=None)
@@ -257,6 +269,7 @@ async def list_source_tracks(
             _st_out(
                 t,
                 names_by_source.get(t.id, []),
+                ids_by_source.get(t.id, []),
                 lt=lt,
                 sc=sc,
                 top_match_library_track_id=lid,

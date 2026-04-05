@@ -88,19 +88,61 @@ async def import_playlist_tracks(
     tracks: list[PlaylistTrackInput],
     import_source: str,
     source_kind: str,
+    spotify_playlist_id: str | None = None,
 ) -> tuple[uuid.UUID, int, int]:
-    """Create playlist, upsert source_tracks (Spotify dedupe), attach M2M.
+    """Create or reuse playlist, upsert source_tracks (Spotify dedupe), attach M2M.
+
+    Re-imports: same Spotify playlist id reuses one row; same CSV name + import_source
+    reuses a non-Spotify playlist for that user.
 
     Returns (playlist_id, rows_attached, new_source_rows).
     """
-    pl = Playlist(
-        id=uuid.uuid4(),
-        user_id=user_id,
-        name=name.strip() if name.strip() else "Imported playlist",
-        import_source=import_source,
-    )
-    db.add(pl)
-    await db.flush()
+    display_name = name.strip() if name.strip() else "Imported playlist"
+
+    norm_spotify_pl: str | None = None
+    if spotify_playlist_id and spotify_playlist_id.strip():
+        raw = spotify_playlist_id.strip()
+        norm_spotify_pl = raw[:64] if len(raw) > 64 else raw
+
+    pl: Playlist | None = None
+    if norm_spotify_pl is not None:
+        res = await db.execute(
+            select(Playlist)
+            .where(
+                Playlist.user_id == user_id,
+                Playlist.spotify_playlist_id == norm_spotify_pl,
+            )
+            .order_by(Playlist.created_at.asc())
+            .limit(1)
+        )
+        pl = res.scalars().first()
+        if pl is not None:
+            pl.name = display_name
+
+    if pl is None and norm_spotify_pl is None:
+        res = await db.execute(
+            select(Playlist)
+            .where(
+                Playlist.user_id == user_id,
+                Playlist.name == display_name,
+                Playlist.import_source == import_source,
+                Playlist.spotify_playlist_id.is_(None),
+            )
+            .order_by(Playlist.created_at.asc())
+            .limit(1)
+        )
+        pl = res.scalars().first()
+
+    if pl is None:
+        pl = Playlist(
+            id=uuid.uuid4(),
+            user_id=user_id,
+            name=display_name,
+            import_source=import_source,
+            spotify_playlist_id=norm_spotify_pl,
+        )
+        db.add(pl)
+        await db.flush()
 
     new_sources = 0
     attached = 0

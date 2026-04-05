@@ -33,7 +33,7 @@ const WelcomeModalContext = createContext<WelcomeModalContextValue | null>(null)
 
 export function WelcomeModalProvider({ children }: { children: ReactNode }) {
   const [isOpen, setIsOpen] = useState(() => !readSkipWelcome());
-  const [activeTab, setActiveTab] = useState<WelcomeModalTab>("help");
+  const [activeTab, setActiveTab] = useState<WelcomeModalTab>("welcome");
   const [dontShowAgain, setDontShowAgain] = useState(false);
 
   const openWelcomeModal = useCallback((tab?: WelcomeModalTab) => {

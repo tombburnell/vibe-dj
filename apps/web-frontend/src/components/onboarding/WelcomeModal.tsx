@@ -163,7 +163,7 @@ export function WelcomeModal() {
           {activeTab === "welcome" ? (
             <div className="space-y-4">
               <div className="space-y-2 text-[0.85rem] leading-relaxed text-secondary">
-                <p className="text-primary font-medium">Welcome.</p>
+                <p className="text-primary font-medium">Welcome to Track Mapper!</p>
                 <p>
                   Connect playlist tracks to your library, spot gaps, confirm
                   matches, and queue downloads.

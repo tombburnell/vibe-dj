@@ -117,6 +117,8 @@ export type SourceTrack = {
   spotify_url: string | null;
   on_wishlist: boolean;
   playlist_names: string[];
+  /** Playlist row ids (aligns with playlist_names); used for filters without resolving names client-side. */
+  playlist_ids: string[];
   local_file_path: string | null;
   downloaded_at: string | null;
   amazon_url: string | null;

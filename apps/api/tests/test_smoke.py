@@ -91,6 +91,7 @@ def test_import_playlist_and_candidates_shape(client: TestClient) -> None:
     assert len(pl_list) == 1
     assert pl_list[0]["name"] == "my_unit_pl"
     pid = pl_list[0]["id"]
+    assert src[0]["playlist_ids"] == [pid]
 
     del_r = client.delete(f"/api/playlists/{pid}")
     assert del_r.status_code == 204
@@ -99,6 +100,23 @@ def test_import_playlist_and_candidates_shape(client: TestClient) -> None:
     src_after = client.get("/api/source-tracks").json()
     assert len(src_after) == 1
     assert src_after[0]["playlist_names"] == []
+    assert src_after[0]["playlist_ids"] == []
+
+
+def test_import_playlist_csv_twice_reuses_one_playlist(client: TestClient) -> None:
+    csv_body = (
+        "Song,Artist,Album,Duration,Spotify Track Id\n"
+        "Wishlist Row,Test Artist,ALB,4:00,sp_test_1\n"
+    )
+    fd = {"file": ("my_unit_pl.csv", csv_body.encode("utf-8"), "text/csv")}
+    r1 = client.post("/api/playlists/import", files=fd, data={"import_source": "chosic_csv"})
+    r2 = client.post("/api/playlists/import", files=fd, data={"import_source": "chosic_csv"})
+    assert r1.status_code == 200
+    assert r2.status_code == 200
+    assert r1.json()["playlist_id"] == r2.json()["playlist_id"]
+    assert r2.json()["rows_linked"] == 0
+    pls = client.get("/api/playlists").json()
+    assert len(pls) == 1
 
 
 def test_match_run_with_library_and_sources(client: TestClient) -> None:

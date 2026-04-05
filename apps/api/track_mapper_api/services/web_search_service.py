@@ -289,15 +289,15 @@ def _canonical_url_key(url: str) -> str:
 def default_site_rules() -> tuple[SiteSearchRule, ...]:
     """Default ordered sites; per-domain URL excludes drop non-track-style pages."""
     return (
-        SiteSearchRule(
-            domain="tidal.com",
-            url_exclude_patterns=(r"/browse/artist/",),
-            url_transforms=(
-                # /browse/album/{id} redirects to /album/{id}
-                (r"/browse/album/", "/album/"),
-            ),
-            title_transforms=((r"\s+on\s+TIDAL\s*$", ""),),
-        ),
+        # SiteSearchRule(
+        #     domain="tidal.com",
+        #     url_exclude_patterns=(r"/browse/artist/",),
+        #     url_transforms=(
+        #         # /browse/album/{id} redirects to /album/{id}
+        #         (r"/browse/album/", "/album/"),
+        #     ),
+        #     title_transforms=((r"\s+on\s+TIDAL\s*$", ""),),
+        # ),
         SiteSearchRule(
             domain="amazon.com",
             url_exclude_patterns=(
@@ -350,6 +350,14 @@ def default_site_rules() -> tuple[SiteSearchRule, ...]:
                 (r"\s+--+\s*soundcloud\.com.*$", ""),
             ),
         ),
+        SiteSearchRule(
+            domain="beatport.com",
+            url_exclude_patterns=(
+                r"/tracks/",
+            ),
+            title_transforms=(
+                (r"^Beatport:\s*", ""),
+            ),
     )
 
 

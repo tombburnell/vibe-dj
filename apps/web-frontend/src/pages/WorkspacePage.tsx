@@ -57,18 +57,22 @@ function filterSourcesByDl(rows: SourceTrack[], dl: DlFilter): SourceTrack[] {
   return rows;
 }
 
-/** Rows in any of the selected playlists (by catalog id → name). Empty selection = no playlist filter. */
+/** Rows in any of the selected playlists. Empty selection = no playlist filter. */
 function filterSourcesByPlaylists(
   rows: SourceTrack[],
   selectedPlaylistIds: string[],
   playlists: Playlist[] | null | undefined,
 ): SourceTrack[] {
   if (selectedPlaylistIds.length === 0) return rows;
-  const list = playlists ?? [];
   const idSet = new Set(selectedPlaylistIds);
-  const names = list.filter((p) => idSet.has(p.id)).map((p) => p.name);
-  if (names.length === 0) return rows;
   return rows.filter((s) => {
+    const pids = s.playlist_ids;
+    if (pids && pids.length > 0) {
+      return pids.some((pid) => idSet.has(pid));
+    }
+    const list = playlists ?? [];
+    const names = list.filter((p) => idSet.has(p.id)).map((p) => p.name);
+    if (names.length === 0) return false;
     const pn = s.playlist_names ?? [];
     return names.some((n) => pn.includes(n));
   });

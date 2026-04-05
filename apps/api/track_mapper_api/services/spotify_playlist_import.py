@@ -65,4 +65,5 @@ async def import_public_spotify_playlist(
         tracks=tracks,
         import_source="spotify_web_api",
         source_kind="spotify_web_api",
+        spotify_playlist_id=playlist_id,
     )

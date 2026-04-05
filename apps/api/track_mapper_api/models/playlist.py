@@ -42,6 +42,8 @@ class Playlist(Base):
     user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     import_source: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: Spotify catalog id when imported via Web API; used to merge re-imports.
+    spotify_playlist_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow
     )

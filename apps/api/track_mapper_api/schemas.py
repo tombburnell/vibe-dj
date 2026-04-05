@@ -92,6 +92,10 @@ class SourceTrackOut(BaseModel):
     spotify_url: str | None = None
     on_wishlist: bool = True
     playlist_names: list[str] = Field(default_factory=list)
+    playlist_ids: list[str] = Field(
+        default_factory=list,
+        description="Playlist row UUIDs for this source (same order as playlist_names).",
+    )
     local_file_path: str | None = None
     downloaded_at: datetime | None = None
     amazon_url: str | None = None
