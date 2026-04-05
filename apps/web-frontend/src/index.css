@@ -10,9 +10,19 @@
    *   (No separate *-dark / *-light names: the active theme block defines the values.)
    */
   :root[data-theme="dark"] {
+    color-scheme: dark;
     --color-background: #0c0c0c;
     --color-surface-1: #141414;
     --color-surface-2: #1c1c1c;
+    /* Find-links popover row default (unchanged vs former top-bar pill). */
+    --color-header-control-bg: #6e6e6e;
+    --color-header-control-hover: #2f2f2f;
+    --color-header-control-disabled-bg: #3a3a3a;
+    /* Top bar only (``header-action-surface``): former hover as default, then darker hover */
+    --color-header-bar-action-bg: #2f2f2f;
+    --color-header-bar-action-hover: #1a1a1a;
+    /* Popover rows: default matches header pills; hover darker than --color-surface-1 */
+    --color-popover-menu-item-hover: #0a0a0a;
     --color-border: #2e2e2e;
     --color-text-primary: #f0f0f0;
     --color-text-secondary: #a3a3a3;
@@ -29,9 +39,19 @@
   }
 
   :root[data-theme="light"] {
+    color-scheme: light;
     --color-background: #f4f4f5;
     --color-surface-1: #ffffff;
     --color-surface-2: #e4e4e7;
+    /* Find-links popover row default (unchanged vs former top-bar pill). */
+    --color-header-control-bg: #a8a8b3;
+    --color-header-control-hover: #ffffff;
+    --color-header-control-disabled-bg: #d4d4d8;
+    /* Top bar only (``header-action-surface``): former hover as default, then darker hover */
+    --color-header-bar-action-bg: #ffffff;
+    --color-header-bar-action-hover: #d4d4d8;
+    /* Popover rows: default matches header pills; hover darker than white menu and than default */
+    --color-popover-menu-item-hover: #8f8f9c;
     --color-border: #d4d4d8;
     --color-text-primary: #18181b;
     --color-text-secondary: #52525b;
@@ -107,6 +127,37 @@
 
   .table-header-sort-chevron {
     color: var(--table-header-sort-chevron);
+  }
+
+  /**
+   * Top bar buttons/selects only (import, settings, theme, density). Uses
+   * ``--color-header-bar-action-*`` so Find-links popover rows keep ``--color-header-control-bg``.
+   */
+  .header-action-surface {
+    @apply rounded border transition-colors duration-150 ease-out;
+    border-color: var(--color-border);
+    background-color: var(--color-header-bar-action-bg);
+  }
+
+  button.header-action-surface:hover:not(:disabled),
+  select.header-action-surface:hover {
+    background-color: var(--color-header-bar-action-hover);
+  }
+
+  button.header-action-surface:disabled {
+    cursor: not-allowed;
+    background-color: var(--color-header-control-disabled-bg);
+  }
+
+  /** In-menu actions: same fill as header/import pills; hover darkens vs ``bg-surface-1`` panel */
+  button.popover-menu-item-btn {
+    @apply rounded border text-left transition-colors duration-150 ease-out;
+    border-color: var(--color-border);
+    background-color: var(--color-header-control-bg);
+  }
+
+  button.popover-menu-item-btn:hover:not(:disabled) {
+    background-color: var(--color-popover-menu-item-hover);
   }
 }
 

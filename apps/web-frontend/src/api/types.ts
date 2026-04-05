@@ -102,8 +102,8 @@ export type FindAmazonLinksResult = {
 /** Multisite web search backend for ``findAmazonLinks`` (overrides server env for that request). */
 export type WebSearchProvider = "serper" | "ddg";
 
-/** UI: which link-search action is in progress (``any`` = full-queue find from toolbar). */
-export type LinkSearchSpinTarget = WebSearchProvider | "any" | null;
+/** UI: which link-search action is in progress. */
+export type LinkSearchSpinTarget = WebSearchProvider | null;
 
 export type SourceTrack = {
   id: string;

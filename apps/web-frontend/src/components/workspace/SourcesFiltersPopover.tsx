@@ -12,6 +12,8 @@ type Props = {
   onDlChange: (v: DlFilter) => void;
   matchCategoryFilter: SourceMatchCategoryFilterState;
   onMatchCategoryChange: (next: SourceMatchCategoryFilterState) => void;
+  /** When false, only the downloaded filter is shown (e.g. Download queue tab). */
+  showMatchCategory?: boolean;
 };
 
 const dlOptions: { value: DlFilter; label: string }[] = [
@@ -50,6 +52,7 @@ export function SourcesFiltersPopover({
   onDlChange,
   matchCategoryFilter,
   onMatchCategoryChange,
+  showMatchCategory = true,
 }: Props) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -57,6 +60,7 @@ export function SourcesFiltersPopover({
   const activeCount = useMemo(() => {
     let n = 0;
     if (dlFilter !== "all") n += 1;
+    if (!showMatchCategory) return n;
     const on = countCategoryOn(matchCategoryFilter);
     const neutral = on === 0 || on === SOURCE_MATCH_CATEGORY_KEYS.length;
     const sameAsDefault = categoryFiltersEqual(
@@ -65,7 +69,7 @@ export function SourcesFiltersPopover({
     );
     if (!neutral && !sameAsDefault) n += on;
     return n;
-  }, [dlFilter, matchCategoryFilter]);
+  }, [dlFilter, matchCategoryFilter, showMatchCategory]);
 
   useEffect(() => {
     if (!open) return;
@@ -102,11 +106,17 @@ export function SourcesFiltersPopover({
         <div
           className="absolute left-0 top-full z-50 mt-1 w-[min(100vw-1.5rem,20rem)] rounded-lg border border-border bg-surface-1 p-3 shadow-lg"
           role="dialog"
-          aria-label="Source filters"
+          aria-label={showMatchCategory ? "Source filters" : "Download queue filters"}
         >
           <p className="mb-2 text-[0.7rem] text-muted">
-            Downloaded and match category. Leave all category chips on or all off to show every
-            category.
+            {showMatchCategory ? (
+              <>
+                Downloaded and match category. Leave all category chips on or all off to show every
+                category.
+              </>
+            ) : (
+              <>Limit the queue by whether a local file exists.</>
+            )}
           </p>
 
           <div className="mb-3">
@@ -135,31 +145,35 @@ export function SourcesFiltersPopover({
             </div>
           </div>
 
-          <div>
-            <div className="mb-1.5 text-[0.65rem] font-medium uppercase tracking-wide text-muted">
-              Match category
+          {showMatchCategory ? (
+            <div>
+              <div className="mb-1.5 text-[0.65rem] font-medium uppercase tracking-wide text-muted">
+                Match category
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {SOURCE_MATCH_CATEGORY_KEYS.map((key) => {
+                  const selected = matchCategoryFilter[key];
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      aria-pressed={selected}
+                      className={
+                        selected
+                          ? "rounded-full border border-accent bg-accent px-2.5 py-1 text-[0.75rem] font-medium text-white dark:text-background"
+                          : "rounded-full border border-border bg-surface-2 px-2.5 py-1 text-[0.75rem] text-primary hover:bg-surface-1"
+                      }
+                      onClick={() =>
+                        onMatchCategoryChange(toggleCategory(matchCategoryFilter, key))
+                      }
+                    >
+                      {categoryLabels[key]}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-            <div className="flex flex-wrap gap-1.5">
-              {SOURCE_MATCH_CATEGORY_KEYS.map((key) => {
-                const selected = matchCategoryFilter[key];
-                return (
-                  <button
-                    key={key}
-                    type="button"
-                    aria-pressed={selected}
-                    className={
-                      selected
-                        ? "rounded-full border border-accent bg-accent px-2.5 py-1 text-[0.75rem] font-medium text-white dark:text-background"
-                        : "rounded-full border border-border bg-surface-2 px-2.5 py-1 text-[0.75rem] text-primary hover:bg-surface-1"
-                    }
-                    onClick={() => onMatchCategoryChange(toggleCategory(matchCategoryFilter, key))}
-                  >
-                    {categoryLabels[key]}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+          ) : null}
         </div>
       ) : null}
     </div>

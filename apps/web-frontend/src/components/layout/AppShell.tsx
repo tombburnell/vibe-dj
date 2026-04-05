@@ -4,7 +4,7 @@ import { AppHeader } from "./AppHeader";
 
 type AppShellProps = {
   children: ReactNode;
-  /** Shown in the top bar after Workspace / Settings links */
+  /** Shown in the top bar after the app title */
   headerMenuExtra?: ReactNode;
 };
 

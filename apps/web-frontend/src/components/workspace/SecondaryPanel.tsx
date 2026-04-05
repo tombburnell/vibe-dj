@@ -47,6 +47,10 @@ const HEADER_ACTION_BUTTON_CLASS =
 
 const WEB_SEARCH_ENGINE_BTN_CLASS = `${HEADER_ACTION_BUTTON_CLASS} gap-0.5 px-1.5 py-0.5`;
 
+const IGNORE_ACTION_STACK_BTN_CLASS = `${HEADER_ACTION_BUTTON_CLASS} w-full justify-start py-1.5 text-left`;
+
+const IGNORE_ACTION_INLINE_BTN_CLASS = `inline-flex shrink-0 items-center rounded border border-border bg-surface-1 px-2 py-0.5 ${PANEL_TEXT_CELL} text-primary hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-60`;
+
 function WebSearchEngineButtons({
   disabled,
   onSelect,
@@ -62,9 +66,8 @@ function WebSearchEngineButtons({
     layout === "stack"
       ? "flex flex-col gap-1.5"
       : "flex shrink-0 flex-wrap items-center justify-end gap-1";
-  const googleSpinning =
-    spinTarget === "serper" || spinTarget === "any";
-  const braveSpinning = spinTarget === "ddg" || spinTarget === "any";
+  const googleSpinning = spinTarget === "serper";
+  const braveSpinning = spinTarget === "ddg";
   return (
     <div className={wrap}>
       <button
@@ -274,8 +277,9 @@ export function SecondaryPanel({
       return (
         <PanelChrome title="Links" compactTableStripHeader>
           <p className={`${PANEL_TEXT_CELL} text-muted`}>
-            Select a Download row to see the best link and other URLs. Toolbar: Find links runs a
-            throttled web search for every track in the queue ({downloadQueueCount}).
+            Select a Download row to see the best link and other URLs. Toolbar: Find links opens a
+            menu to run a throttled web search (Google via Serper or Brave via ddgs) for every track
+            in the queue ({downloadQueueCount}); cached rows are skipped.
           </p>
         </PanelChrome>
       );
@@ -302,7 +306,7 @@ export function SecondaryPanel({
             <button
               type="button"
               disabled={wishlistBusy || ignoreable.length === 0}
-              className={`rounded border border-border/80 bg-surface-2 px-2 py-1.5 text-left ${PANEL_TEXT_CELL} text-primary hover:bg-surface-1 disabled:opacity-50`}
+              className={IGNORE_ACTION_STACK_BTN_CLASS}
               onClick={() =>
                 onWishlistSources(
                   ignoreable.map((s) => s.id),
@@ -516,7 +520,7 @@ export function SecondaryPanel({
             <button
               type="button"
               disabled={wishlistBusy}
-              className={`rounded border border-border/80 bg-surface-1 px-2 py-0.5 ${PANEL_TEXT_CELL} text-primary hover:bg-surface-2 disabled:opacity-50`}
+              className={IGNORE_ACTION_INLINE_BTN_CLASS}
               title="Hide from Sources / Download — not deleting the track"
               onClick={() => onWishlistSources([s.id], false)}
             >
@@ -593,7 +597,7 @@ export function SecondaryPanel({
             <button
               type="button"
               disabled={wishlistBusy || ignoreableBulk.length === 0}
-              className={`rounded border border-border/80 bg-surface-2 px-2 py-1.5 text-left ${PANEL_TEXT_CELL} text-primary hover:bg-surface-1 disabled:opacity-50`}
+              className={IGNORE_ACTION_STACK_BTN_CLASS}
               onClick={() =>
                 onWishlistSources(
                   ignoreableBulk.map((s) => s.id),
@@ -751,7 +755,7 @@ export function SecondaryPanel({
               <button
                 type="button"
                 disabled={matchActionBusy || wishlistBusy}
-                className={`rounded border border-border/80 bg-surface-1 px-2 py-0.5 ${PANEL_TEXT_CELL} text-primary hover:bg-surface-2 disabled:opacity-50`}
+                className={IGNORE_ACTION_INLINE_BTN_CLASS}
                 title="Hide from Sources / Download — not deleting the track"
                 onClick={() => onWishlistSources([selectedSource.id], false)}
               >

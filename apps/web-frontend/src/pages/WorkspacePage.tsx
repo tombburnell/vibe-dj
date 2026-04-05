@@ -25,6 +25,7 @@ import type { LibraryTrack } from "@/api/types";
 import type { LinkSearchSpinTarget } from "@/api/types";
 import type { Playlist } from "@/api/types";
 import type { SourceTrack } from "@/api/types";
+import type { WebSearchProvider } from "@/api/types";
 import { AppShell } from "@/components/layout/AppShell";
 import { LocalScanFolderTrigger } from "@/components/settings/LocalScanFolderTrigger";
 import { WorkspaceLayout } from "@/components/layout/WorkspaceLayout";
@@ -93,8 +94,10 @@ export function WorkspacePage() {
   const [matchActionBusy, setMatchActionBusy] = useState(false);
   const [runMatchingBusy, setRunMatchingBusy] = useState(false);
   const [findLinksBusy, setFindLinksBusy] = useState(false);
+  const [findLinksMenuOpen, setFindLinksMenuOpen] = useState(false);
   const [linkSearchSpinTarget, setLinkSearchSpinTarget] =
     useState<LinkSearchSpinTarget>(null);
+  const findLinksMenuRef = useRef<HTMLDivElement>(null);
   const libraryFileRef = useRef<HTMLInputElement>(null);
   const playlistFileRef = useRef<HTMLInputElement>(null);
   const [spotifyPlaylistInput, setSpotifyPlaylistInput] = useState("");
@@ -464,6 +467,20 @@ export function WorkspacePage() {
   }, [playlistsQuery.data]);
 
   useEffect(() => {
+    if (!findLinksMenuOpen) return;
+    const onPointerDown = (e: PointerEvent) => {
+      const el = findLinksMenuRef.current;
+      if (el && !el.contains(e.target as Node)) setFindLinksMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [findLinksMenuOpen]);
+
+  useEffect(() => {
+    if (mainView !== "download") setFindLinksMenuOpen(false);
+  }, [mainView]);
+
+  useEffect(() => {
     if (mainView === "library") {
       setSelectedSourceIds([]);
       return;
@@ -480,19 +497,25 @@ export function WorkspacePage() {
       ? libraryQuery.isLoading && libraryQuery.data.length === 0
       : sourceQuery.isLoading;
 
-  const runFindLinksForDisplayed = () => {
+  const runFindLinksForDisplayed = (web_search_provider: WebSearchProvider) => {
     const ids = displayDownloadSources.map((s) => s.id);
     if (ids.length === 0) {
       showToast("No tracks in the Download queue.", "info");
       return;
     }
+    const label = web_search_provider === "serper" ? "Google (Serper)" : "Brave (ddgs)";
+    setFindLinksMenuOpen(false);
     setFindLinksBusy(true);
-    setLinkSearchSpinTarget("any");
+    setLinkSearchSpinTarget(web_search_provider);
     void (async () => {
       try {
-        const r = await findAmazonLinks({ source_track_ids: ids, force: false });
+        const r = await findAmazonLinks({
+          source_track_ids: ids,
+          force: false,
+          web_search_provider,
+        });
         showToast(
-          `Find links: searched ${r.searched_count}, skipped cached ${r.skipped_cached_count}, errors ${r.error_count}`,
+          `Find links (${label}): searched ${r.searched_count}, skipped cached ${r.skipped_cached_count}, errors ${r.error_count}`,
           "info",
         );
         void queryClient.invalidateQueries({ queryKey: ["sourceTracks"] });
@@ -555,7 +578,7 @@ export function WorkspacePage() {
           />
           <button
             type="button"
-            className="rounded border border-border bg-surface-1 px-2 py-1 text-[0.75rem] text-primary hover:bg-surface-2"
+            className="header-action-surface px-2 py-1 text-[0.75rem] text-primary"
             onClick={() => libraryFileRef.current?.click()}
           >
             Import Rekordbox TSV
@@ -574,7 +597,7 @@ export function WorkspacePage() {
           />
           <button
             type="button"
-            className="rounded border border-border bg-surface-1 px-2 py-1 text-[0.75rem] text-primary hover:bg-surface-2"
+            className="header-action-surface px-2 py-1 text-[0.75rem] text-primary"
             onClick={() => playlistFileRef.current?.click()}
           >
             Import playlist CSV
@@ -585,9 +608,9 @@ export function WorkspacePage() {
                 type="text"
                 value={spotifyPlaylistInput}
                 onChange={(e) => setSpotifyPlaylistInput(e.target.value)}
-                placeholder="Spotify playlist URL or id"
-                aria-label="Spotify playlist URL or id"
-                className="min-w-0 flex-1 rounded border border-border/80 bg-surface-1 px-2 py-1 text-[0.75rem] text-primary placeholder:text-secondary"
+                placeholder="Spotify playlist URL/id"
+                  aria-label="Spotify playlist URL/id"
+                className="min-w-0 flex-1 rounded border-0 bg-surface-1 px-2 py-1 text-[0.75rem] text-primary outline-none ring-0 placeholder:text-secondary focus:ring-0"
                 disabled={importSpotifyPlaylistMutation.isPending}
                 onKeyDown={(e) => {
                   if (e.key !== "Enter") return;
@@ -601,20 +624,20 @@ export function WorkspacePage() {
                 disabled={
                   !spotifyPlaylistInput.trim() || importSpotifyPlaylistMutation.isPending
                 }
-                className="shrink-0 rounded border border-border bg-surface-1 px-2 py-1 text-[0.75rem] text-primary hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-60"
+                className="header-action-surface shrink-0 px-2 py-1 text-[0.75rem] text-primary disabled:text-primary disabled:cursor-not-allowed"
                 onClick={() => {
                   const v = spotifyPlaylistInput.trim();
                   if (!v) return;
                   importSpotifyPlaylistMutation.mutate(v);
                 }}
               >
-                Import from Spotify
+                Import
               </button>
             </span>
           ) : null}
           <LocalScanFolderTrigger
             idleLabel="Folder scan"
-            buttonClassName="rounded border border-border bg-surface-1 px-2 py-1 text-[0.75rem] text-primary hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-60"
+            buttonClassName="header-action-surface px-2 py-1 text-[0.75rem] text-primary disabled:text-primary disabled:cursor-not-allowed"
           />
         </>
       }
@@ -632,14 +655,17 @@ export function WorkspacePage() {
                 error={playlistsQuery.error}
               />
             ) : null}
+            {mainView === "sources" || mainView === "download" ? (
+              <SourcesFiltersPopover
+                dlFilter={dlFilter}
+                onDlChange={setDlFilter}
+                matchCategoryFilter={matchCategoryFilter}
+                onMatchCategoryChange={setMatchCategoryFilter}
+                showMatchCategory={mainView === "sources"}
+              />
+            ) : null}
             {mainView === "sources" ? (
               <>
-                <SourcesFiltersPopover
-                  dlFilter={dlFilter}
-                  onDlChange={setDlFilter}
-                  matchCategoryFilter={matchCategoryFilter}
-                  onMatchCategoryChange={setMatchCategoryFilter}
-                />
                 <label className="flex items-center gap-1.5 text-[0.75rem] text-secondary">
                   <span className="whitespace-nowrap">Min match</span>
                   <input
@@ -722,25 +748,63 @@ export function WorkspacePage() {
               </>
             ) : mainView === "download" ? (
               <>
-                <button
-                  type="button"
-                  disabled={findLinksBusy || displayDownloadSources.length === 0}
-                  aria-busy={findLinksBusy}
-                  className="inline-flex items-center gap-1.5 rounded border border-border bg-surface-2 px-2 py-1 text-[0.75rem] text-primary hover:bg-surface-1 disabled:cursor-not-allowed disabled:opacity-60"
-                  onClick={() => runFindLinksForDisplayed()}
-                >
-                  {findLinksBusy ? (
-                    <>
-                      <span
-                        className="inline-block size-3.5 shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent opacity-80"
-                        aria-hidden
-                      />
-                      <span>Finding…</span>
-                    </>
-                  ) : (
-                    "Find links"
-                  )}
-                </button>
+                <div className="relative" ref={findLinksMenuRef}>
+                  <button
+                    type="button"
+                    disabled={findLinksBusy || displayDownloadSources.length === 0}
+                    aria-busy={findLinksBusy}
+                    aria-expanded={findLinksMenuOpen}
+                    aria-haspopup="dialog"
+                    aria-controls="find-links-provider-menu"
+                    className="inline-flex items-center gap-1.5 rounded border border-border bg-surface-2 px-2 py-1 text-[0.75rem] text-primary hover:bg-surface-1 disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={() => {
+                      if (findLinksBusy) return;
+                      setFindLinksMenuOpen((o) => !o);
+                    }}
+                  >
+                    {findLinksBusy ? (
+                      <>
+                        <span
+                          className="inline-block size-3.5 shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent opacity-80"
+                          aria-hidden
+                        />
+                        <span>Finding…</span>
+                      </>
+                    ) : (
+                      "Find links"
+                    )}
+                  </button>
+                  {findLinksMenuOpen && !findLinksBusy ? (
+                    <div
+                      id="find-links-provider-menu"
+                      role="dialog"
+                      aria-label="Choose web search for Find links"
+                      className="absolute left-0 top-full z-50 mt-1 w-[min(100vw-1.5rem,14rem)] rounded-lg border border-border bg-surface-1 p-2 shadow-lg"
+                    >
+                      <p className="mb-2 px-1 text-[0.65rem] text-muted">
+                        Search engine for every track in the queue (cached rows skipped).
+                      </p>
+                      <div className="flex flex-col gap-1.5">
+                        <button
+                          type="button"
+                          className="popover-menu-item-btn inline-flex w-full items-center gap-2 px-2 py-1.5 text-[0.75rem] text-primary"
+                          onClick={() => runFindLinksForDisplayed("serper")}
+                        >
+                          <SiGoogle className="size-4 shrink-0" aria-hidden />
+                          <span>Google (Serper)</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="popover-menu-item-btn inline-flex w-full items-center gap-2 px-2 py-1.5 text-[0.75rem] text-primary"
+                          onClick={() => runFindLinksForDisplayed("ddg")}
+                        >
+                          <SiBrave className="size-4 shrink-0" aria-hidden />
+                          <span>Brave (ddgs)</span>
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
                 <div
                   className="flex items-center gap-0.5"
                   role="group"

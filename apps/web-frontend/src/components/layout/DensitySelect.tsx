@@ -16,7 +16,7 @@ export function DensitySelect({ value, onChange }: Props) {
     <label className="flex items-center gap-1.5 text-[0.75rem] text-secondary">
       <span className="sr-only">Table density</span>
       <select
-        className="rounded border border-border bg-surface-1 px-1.5 py-1 text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+        className="rounded border-0 bg-surface-1 px-2 py-1 text-[0.75rem] text-primary outline-none ring-0 focus:ring-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
         value={value}
         onChange={(e) => {
           const v = e.target.value;
