@@ -7,7 +7,17 @@ import { useToast } from "@/providers/ToastProvider";
 
 import { LocalScanModal } from "@/components/settings/LocalScanModal";
 
-const DL_AUDIO_EXT = [".mp3", ".flac", ".m4a", ".wav", ".aac", ".ogg", ".wma"] as const;
+const DL_AUDIO_EXT = [
+  ".mp3",
+  ".flac",
+  ".m4a",
+  ".wav",
+  ".aac",
+  ".ogg",
+  ".wma",
+  ".webm",
+  ".opus",
+] as const;
 
 const LOCAL_SCAN_LOG = "[local-scan]";
 

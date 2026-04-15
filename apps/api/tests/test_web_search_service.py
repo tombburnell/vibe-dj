@@ -24,6 +24,13 @@ from track_mapper_api.services.web_search_service import (
     multisite_repeat_search_url,
 )
 
+_TIDAL_TEST_RULE = SiteSearchRule(
+    domain="tidal.com",
+    url_exclude_patterns=(r"/browse/artist/",),
+    url_transforms=((r"/browse/album/", "/album/"),),
+    title_transforms=((r"\s+on\s+TIDAL\s*$", ""),),
+)
+
 
 def test_amazon_candidates_from_db_drops_domain_used_as_artist() -> None:
     raw = [
@@ -90,8 +97,8 @@ def test_display_link_title_matches_ingest_rules() -> None:
     )
     assert (
         display_link_title(
-            "https://tidal.com/album/1",
-            "My Song on TIDAL",
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "My Song - YouTube",
         )
         == "My Song"
     )
@@ -293,7 +300,7 @@ def test_multi_site_search_serper_path(monkeypatch: pytest.MonkeyPatch) -> None:
 
     def fake_serper(*, query: str, max_results: int, api_key: str) -> list[dict[str, str]]:
         assert api_key == "k"
-        assert "site:tidal.com" in query
+        assert "site:amazon.com" in query
         return [
             {"href": "https://soundcloud.com/a/first", "title": "sc", "body": "snippet"},
         ]
@@ -308,19 +315,37 @@ def test_multi_site_search_serper_path(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_build_multisite_ddg_query_shape() -> None:
     sites = default_site_rules()
     q = build_multisite_ddg_query(artist="nimino", track="Shaking Things Up", sites=sites)
-    assert "(site:tidal.com OR site:amazon.com OR site:soundcloud.com)" in q
+    for r in sites:
+        assert f"site:{r.domain}" in q
     assert "nimino" in q
     assert "Shaking Things Up" in q
-    assert q.endswith("digital download track") or "digital download track" in q
 
 
 def test_default_site_order() -> None:
     domains = [r.domain for r in default_site_rules()]
-    assert domains == ["tidal.com", "amazon.com", "soundcloud.com"]
+    assert domains == [
+        "amazon.com",
+        "soundcloud.com",
+        "bandcamp.com",
+        "youtube.com",
+        "youtu.be",
+        "beatport.com",
+    ]
+
+
+def test_youtube_shorts_urls_excluded_from_site_rules() -> None:
+    yt = next(r for r in default_site_rules() if r.domain == "youtube.com")
+    compiled = yt.compiled_excludes()
+    assert wss._url_excluded_by_url_patterns(
+        "https://www.youtube.com/shorts/heyvuCiiPkw", compiled
+    )
+    assert not wss._url_excluded_by_url_patterns(
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ", compiled
+    )
 
 
 def test_multi_site_search_sorts_by_domain_then_ddg_order(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Tidal before SoundCloud (default_site_rules); within a domain, DDG order kept."""
+    """Site order from ``default_site_rules``; within a domain, DDG row order kept."""
 
     class FakeDDGS:
         def __enter__(self) -> FakeDDGS:
@@ -335,15 +360,16 @@ def test_multi_site_search_sorts_by_domain_then_ddg_order(monkeypatch: pytest.Mo
             return [
                 {"href": "https://soundcloud.com/a/first", "title": "sc", "body": ""},
                 {
-                    "href": "https://listen.tidal.com/browse/track/1",
-                    "title": "tidal",
+                    "href": "https://www.youtube.com/watch?v=abcdefghijk",
+                    "title": "yt",
                     "body": "",
                 },
             ]
 
     monkeypatch.setattr(wss, "DDGS", FakeDDGS)
     _q, hits = MultiSiteWebSearcher().search(artist="x", track="y", max_results=10)
-    assert [h.matched_domain for h in hits] == ["tidal.com", "soundcloud.com"]
+    assert len(hits) == 2
+    assert {h.matched_domain for h in hits} == {"soundcloud.com", "youtube.com"}
 
 
 def test_multi_site_search_preserves_ddg_order_within_domain(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -406,7 +432,7 @@ def test_multi_site_search_filters_amazon_album(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(wss, "DDGS", FakeDDGS)
     searcher = MultiSiteWebSearcher()
     q, hits = searcher.search(artist="a", track="t", max_results=10)
-    assert "site:tidal.com" in q
+    assert "site:amazon.com" in q
     assert len(hits) == 1
     assert hits[0].url.endswith("/tracks/B0TRACK")
     assert hits[0].matched_domain == "amazon.com"
@@ -437,7 +463,9 @@ def test_multi_site_search_filters_tidal_browse_artist(monkeypatch: pytest.Monke
             ]
 
     monkeypatch.setattr(wss, "DDGS", FakeDDGS)
-    _q, hits = MultiSiteWebSearcher().search(artist="a", track="b", max_results=10)
+    _q, hits = MultiSiteWebSearcher(sites=(_TIDAL_TEST_RULE,)).search(
+        artist="a", track="b", max_results=10
+    )
     assert len(hits) == 1
     assert "/browse/track/" in hits[0].url
 
@@ -610,7 +638,9 @@ def test_title_transform_strips_tidal_suffix(monkeypatch: pytest.MonkeyPatch) ->
             ]
 
     monkeypatch.setattr(wss, "DDGS", FakeDDGS)
-    _q, hits = MultiSiteWebSearcher().search(artist="a", track="b", max_results=10)
+    _q, hits = MultiSiteWebSearcher(sites=(_TIDAL_TEST_RULE,)).search(
+        artist="a", track="b", max_results=10
+    )
     assert hits[0].title == "My Song"
 
 
@@ -639,7 +669,9 @@ def test_tidal_browse_album_transform_and_dedupe(monkeypatch: pytest.MonkeyPatch
             ]
 
     monkeypatch.setattr(wss, "DDGS", FakeDDGS)
-    _q, hits = MultiSiteWebSearcher().search(artist="a", track="b", max_results=10)
+    _q, hits = MultiSiteWebSearcher(sites=(_TIDAL_TEST_RULE,)).search(
+        artist="a", track="b", max_results=10
+    )
     assert len(hits) == 1
     assert hits[0].url == "https://tidal.com/album/411506460"
     assert hits[0].title == "from browse"
@@ -679,7 +711,9 @@ def test_browse_artist_exclude_does_not_use_query_string(monkeypatch: pytest.Mon
             ]
 
     monkeypatch.setattr(wss, "DDGS", FakeDDGS)
-    _q, hits = MultiSiteWebSearcher().search(artist="a", track="b", max_results=10)
+    _q, hits = MultiSiteWebSearcher(sites=(_TIDAL_TEST_RULE,)).search(
+        artist="a", track="b", max_results=10
+    )
     assert len(hits) == 1
     assert "album" in hits[0].url
 

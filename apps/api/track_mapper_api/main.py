@@ -55,6 +55,7 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=["X-Persisted-Path"],
     )
     app.include_router(library_tracks.router, prefix="/api")
     app.include_router(library_snapshots.router, prefix="/api")

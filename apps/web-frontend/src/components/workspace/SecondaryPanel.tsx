@@ -1,13 +1,18 @@
 import { useCallback, useState } from "react";
-import { HiArrowPath, HiNoSymbol } from "react-icons/hi2";
+import { HiArrowDownTray, HiArrowPath, HiNoSymbol, HiShoppingCart } from "react-icons/hi2";
 import { SiBrave, SiGoogle } from "react-icons/si";
 
-import type { AmazonLinkCandidate } from "@/api/types";
 import type { LibraryTrack } from "@/api/types";
 import type { MatchCandidate } from "@/api/types";
 import type { SourceTrack } from "@/api/types";
 import type { LinkSearchSpinTarget, WebSearchProvider } from "@/api/types";
 import { formatDurationMs } from "@/lib/formatDuration";
+import {
+  collectNonBrokenAmazonLinkUrls,
+  sortAmazonCandidatesForDisplay,
+} from "@/lib/amazonLinkUtils";
+import { bandcampBuyPageUrl, isBandcampUrl } from "@/lib/bandcampUrl";
+import { isYoutubeUrl } from "@/lib/youtubeUrl";
 
 import { LinkSiteIcon } from "@/components/LinkSiteIcon";
 
@@ -122,15 +127,6 @@ function linkListLabel(
   return parts.length > 0 ? parts.join(" — ") : fallback;
 }
 
-/** Non-broken first (preserving order), then broken at the bottom. */
-function sortAmazonCandidatesForDisplay(
-  rows: AmazonLinkCandidate[],
-): AmazonLinkCandidate[] {
-  const ok = rows.filter((c) => !c.broken);
-  const bad = rows.filter((c) => c.broken);
-  return [...ok, ...bad];
-}
-
 function MarkAmazonLinkBrokenButton({
   disabled,
   onMark,
@@ -150,6 +146,45 @@ function MarkAmazonLinkBrokenButton({
     >
       <HiNoSymbol className="size-3.5 shrink-0" aria-hidden />
     </button>
+  );
+}
+
+function YoutubeDownloadAudioButton({
+  disabled,
+  onDownload,
+}: {
+  disabled: boolean;
+  onDownload: () => void;
+}) {
+  const title = "Download as .m4a (AAC) for decks — saves via browser";
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      title={title}
+      aria-label={title}
+      onClick={() => void onDownload()}
+      className="shrink-0 rounded border-0 bg-transparent p-1 text-muted transition-colors hover:bg-surface-2/80 hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      <HiArrowDownTray className="size-3.5 shrink-0" aria-hidden />
+    </button>
+  );
+}
+
+function BandcampBuyButton({ url }: { url: string }) {
+  const buyUrl = bandcampBuyPageUrl(url);
+  const title = "Open Bandcamp buy page (new tab)";
+  return (
+    <a
+      href={buyUrl}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={title}
+      aria-label={title}
+      className="inline-flex shrink-0 rounded border-0 bg-transparent p-1 text-muted transition-colors hover:bg-surface-2/80 hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
+    >
+      <HiShoppingCart className="size-3.5 shrink-0" aria-hidden />
+    </a>
   );
 }
 
@@ -244,6 +279,11 @@ type Props = {
   /** Download view: mark a purchase/search URL broken (API repoints primary when needed). */
   onMarkAmazonLinkBroken: (url: string) => void | Promise<void>;
   markAmazonLinkBrokenBusy: boolean;
+  /** Download view: mark every non-broken best + alternate link for the current selection. */
+  onMarkAllShownLinksBroken: () => void | Promise<void>;
+  /** Download view: fetch best native audio for a YouTube URL on this row. */
+  onDownloadYoutubeAudio: (url: string) => void | Promise<void>;
+  youtubeAudioDownloadBusy: boolean;
 };
 
 export function SecondaryPanel({
@@ -271,6 +311,9 @@ export function SecondaryPanel({
   onWishlistSources,
   onMarkAmazonLinkBroken,
   markAmazonLinkBrokenBusy,
+  onMarkAllShownLinksBroken,
+  onDownloadYoutubeAudio,
+  youtubeAudioDownloadBusy,
 }: Props) {
   if (mainView === "download") {
     if (sourceSelectionCount === 0) {
@@ -287,6 +330,10 @@ export function SecondaryPanel({
 
     if (sourceSelectionCount > 1) {
       const ignoreable = selectedSourcesBulk.filter((s) => s.on_wishlist);
+      const bulkMarkableCount = selectedSourcesBulk.reduce(
+        (n, s) => n + collectNonBrokenAmazonLinkUrls(s).length,
+        0,
+      );
       return (
         <PanelChrome title="Links" compactTableStripHeader>
           <p className={`mb-2 ${PANEL_TEXT_CELL} text-muted`}>
@@ -303,6 +350,21 @@ export function SecondaryPanel({
               spinTarget={linkSearchSpinTarget}
               onSelect={onReSearchSelectedDownloads}
             />
+            <button
+              type="button"
+              disabled={
+                findLinksBusy ||
+                markAmazonLinkBrokenBusy ||
+                bulkMarkableCount === 0
+              }
+              className={HEADER_ACTION_BUTTON_CLASS}
+              title="Mark every non-broken purchase/search link on selected tracks as broken"
+              onClick={() => void onMarkAllShownLinksBroken()}
+            >
+              Mark all links bad {bulkMarkableCount > 0 ? (
+                <span className="ml-1 tabular-nums text-muted">({bulkMarkableCount})</span>
+              ) : null}
+            </button>
             <button
               type="button"
               disabled={wishlistBusy || ignoreable.length === 0}
@@ -349,18 +411,37 @@ export function SecondaryPanel({
       SPECIAL_LINK_PREFIX && s.amazon_url
         ? `${SPECIAL_LINK_PREFIX}${s.amazon_url}`
         : "";
+    const markableUrls = collectNonBrokenAmazonLinkUrls(s);
 
     return (
       <PanelChrome
         title="Links"
         compactTableStripHeader
         headerRight={
-          <WebSearchEngineButtons
-            disabled={findLinksBusy}
-            layout="inline"
-            spinTarget={linkSearchSpinTarget}
-            onSelect={onReSearchSelectedDownloads}
-          />
+          <div className="flex max-w-[min(100%,28rem)] flex-wrap items-center justify-end gap-1">
+            <button
+              type="button"
+              disabled={
+                findLinksBusy ||
+                markAmazonLinkBrokenBusy ||
+                markableUrls.length === 0
+              }
+              className={HEADER_ACTION_BUTTON_CLASS}
+              title="Mark every non-broken purchase/search link shown here as broken"
+              onClick={() => void onMarkAllShownLinksBroken()}
+            >
+              Mark all links bad
+              {markableUrls.length > 0 ? (
+                <span className="ml-1 tabular-nums text-muted">({markableUrls.length})</span>
+              ) : null}
+            </button>
+            <WebSearchEngineButtons
+              disabled={findLinksBusy}
+              layout="inline"
+              spinTarget={linkSearchSpinTarget}
+              onSelect={onReSearchSelectedDownloads}
+            />
+          </div>
         }
       >
         <div
@@ -406,6 +487,19 @@ export function SecondaryPanel({
                   : "—"}
               </span>
               <div className="flex shrink-0 items-center justify-end gap-0.5 pt-0.5">
+                {isBandcampUrl(s.amazon_url) && !bestCand?.broken ? (
+                  <BandcampBuyButton url={s.amazon_url} />
+                ) : null}
+                {isYoutubeUrl(s.amazon_url) && !bestCand?.broken ? (
+                  <YoutubeDownloadAudioButton
+                    disabled={
+                      youtubeAudioDownloadBusy ||
+                      findLinksBusy ||
+                      markAmazonLinkBrokenBusy
+                    }
+                    onDownload={() => onDownloadYoutubeAudio(s.amazon_url as string)}
+                  />
+                ) : null}
                 <CopyUrlIconButton url={s.amazon_url} />
                 {specialPrefixedBestUrl ? (
                   <CopyUrlIconButton
@@ -470,6 +564,19 @@ export function SecondaryPanel({
                     {c.match_score != null ? `${Math.round(c.match_score)}%` : "—"}
                   </span>
                   <div className="flex shrink-0 items-center justify-end gap-0.5 pt-0.5">
+                    {isBandcampUrl(c.url) && !c.broken ? (
+                      <BandcampBuyButton url={c.url} />
+                    ) : null}
+                    {isYoutubeUrl(c.url) && !c.broken ? (
+                      <YoutubeDownloadAudioButton
+                        disabled={
+                          youtubeAudioDownloadBusy ||
+                          findLinksBusy ||
+                          markAmazonLinkBrokenBusy
+                        }
+                        onDownload={() => onDownloadYoutubeAudio(c.url)}
+                      />
+                    ) : null}
                     <CopyUrlIconButton url={c.url} />
                     {SPECIAL_LINK_PREFIX ? (
                       <CopyUrlIconButton

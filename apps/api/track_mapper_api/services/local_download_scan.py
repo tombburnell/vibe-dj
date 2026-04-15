@@ -27,6 +27,8 @@ _MUSIC_EXTENSIONS = frozenset(
         ".aac",
         ".ogg",
         ".wma",
+        ".webm",
+        ".opus",
     }
 )
 

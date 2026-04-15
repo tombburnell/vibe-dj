@@ -59,6 +59,9 @@ htmlcov/
 # Cache files
 .amazon-cache
 
+# API: yt-dlp audio (bind-mounted repo)
+data/youtube-audio/
+
 
 rekordbox
 playlists

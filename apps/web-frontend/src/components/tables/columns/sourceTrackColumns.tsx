@@ -6,6 +6,7 @@ import { formatDurationMs } from "@/lib/formatDuration";
 import { BestMatchCell } from "./BestMatchCell";
 import { DownloadedCell } from "./DownloadedCell";
 import { MatchScoreCell } from "./MatchScoreCell";
+import { SpotifyPlayCell } from "./SpotifyPlayCell";
 import { SortableHeader } from "../SortableHeader";
 
 const PLAYLIST_CHIP_CHARS = 12;
@@ -64,6 +65,20 @@ export function buildSourceTrackColumns(): ColumnDef<SourceTrack>[] {
       ),
       sortUndefined: "last",
       sortingFn: "basic",
+    },
+    {
+      id: "spotify_play",
+      accessorFn: (row) => row.spotify_id ?? "",
+      enableSorting: false,
+      size: 40,
+      minSize: 36,
+      maxSize: 56,
+      header: ({ column }) => (
+        <SortableHeader column={column} title="Open in Spotify app">
+          Play
+        </SortableHeader>
+      ),
+      cell: ({ row }) => <SpotifyPlayCell spotifyId={row.original.spotify_id} />,
     },
     {
       id: "top_match",

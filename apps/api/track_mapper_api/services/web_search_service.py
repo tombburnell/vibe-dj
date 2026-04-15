@@ -301,8 +301,8 @@ def default_site_rules() -> tuple[SiteSearchRule, ...]:
         SiteSearchRule(
             domain="amazon.com",
             url_exclude_patterns=(
-                r"/albums?/",
-                r"/album(/|$|\?)",
+                # r"/albums?/",
+                # r"/album(/|$|\?)",
                 r"/artists?/",
             ),
             title_transforms=(
@@ -351,6 +351,42 @@ def default_site_rules() -> tuple[SiteSearchRule, ...]:
             ),
         ),
         SiteSearchRule(
+            domain="bandcamp.com",
+            url_exclude_patterns=(
+                r"/merch/",
+                r"/community/",
+                r"/fans/",
+                r"^/?$",
+            ),
+            title_transforms=(
+                (r"\s*\|\s*Bandcamp\s*$", ""),
+                (r"\s+on\s+Bandcamp\s*$", ""),
+                (r"\s+[-–—\u2212]\s*Bandcamp\s*$", ""),
+                (r"\s+--+\s*Bandcamp\s*$", ""),
+                (r"\s+[-–—\u2212]\s*bandcamp\.com.*$", ""),
+                (r"\s+--+\s*bandcamp\.com.*$", ""),
+            ),
+        ),
+        SiteSearchRule(
+            domain="youtube.com",
+            url_exclude_patterns=(
+                r"/shorts/",
+                r"/playlist",
+                r"/channel/",
+                r"/user/",
+                r"/c/",
+                r"/feed/",
+                r"/results",
+                r"/@",
+            ),
+            title_transforms=((r"\s*-\s*YouTube\s*$", ""),),
+        ),
+        SiteSearchRule(
+            domain="youtu.be",
+            url_exclude_patterns=(),
+            title_transforms=((r"\s*-\s*YouTube\s*$", ""),),
+        ),
+        SiteSearchRule(
             domain="beatport.com",
             url_exclude_patterns=(
                 r"/tracks/",
@@ -358,6 +394,7 @@ def default_site_rules() -> tuple[SiteSearchRule, ...]:
             title_transforms=(
                 (r"^Beatport:\s*", ""),
             ),
+        ),
     )
 
 

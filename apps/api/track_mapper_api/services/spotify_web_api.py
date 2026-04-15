@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import re
 import time
@@ -14,7 +15,50 @@ import requests
 logger = logging.getLogger(__name__)
 
 ACCOUNTS_URL = "https://accounts.spotify.com/api/token"
+
+
+def _log_spotify_response_json(label: str, payload: object) -> None:
+    """Pretty-print Spotify API JSON for import debugging (can be large)."""
+    try:
+        pretty = json.dumps(payload, indent=2, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        pretty = str(payload)
+    logger.info("Spotify Web API response %s:\n%s", label, pretty)
+
+
 API_BASE = "https://api.spotify.com/v1"
+
+
+def _log_first_track_from_tracks_endpoint(
+    *,
+    headers: dict[str, str],
+    track_id: str,
+    market: str,
+) -> None:
+    """GET ``/v1/tracks/{id}`` for the first playlist track (compare vs playlist-embedded object)."""
+    tid = track_id.strip()
+    if not tid:
+        return
+    m = market.strip().upper()
+    if len(m) != 2:
+        m = "US"
+    url = f"{API_BASE}/tracks/{tid}"
+    resp = requests.get(url, headers=headers, params={"market": m}, timeout=60)
+    if resp.status_code != 200:
+        logger.warning(
+            "Spotify GET /v1/tracks/%s failed: status=%s body=%s",
+            tid,
+            resp.status_code,
+            resp.text[:500],
+        )
+        return
+    try:
+        body = resp.json()
+    except ValueError:
+        logger.warning("Spotify GET /v1/tracks/%s: response was not JSON", tid)
+        return
+    _log_spotify_response_json(f"GET /v1/tracks/{tid} (market={m})", body)
+
 
 # Spotify playlist ids are base62; URLs may include locale segments before ``playlist/``.
 _PLAYLIST_URL_RE = re.compile(
@@ -263,6 +307,7 @@ def fetch_playlist_tracks(
             m,
         )
 
+    page_index = 0
     while url:
         page_url = _ensure_playlist_items_page_url(url, m)
         tr_resp = requests.get(page_url, headers=headers, timeout=60)
@@ -284,9 +329,21 @@ def fetch_playlist_tracks(
                 )
             raise SpotifyWebApiError(detail, status_code=tr_resp.status_code)
         page = tr_resp.json()
+        # _log_spotify_response_json(
+        #     f"GET playlist items page page_index={page_index} playlist_id={playlist_id}",
+        #     page,
+        # )
+        page_index += 1
         _append_rows_from_page(page)
         next_url = page.get("next")
         url = next_url if isinstance(next_url, str) and next_url.strip() else None
+
+    # if tracks:
+    #     _log_first_track_from_tracks_endpoint(
+    #         headers=headers,
+    #         track_id=tracks[0].spotify_id,
+    #         market=m,
+    #     )
 
     return SpotifyPlaylistBundle(playlist_name=playlist_name, tracks=tracks)
 

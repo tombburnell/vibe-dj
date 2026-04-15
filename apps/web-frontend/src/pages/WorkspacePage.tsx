@@ -12,6 +12,7 @@ import {
   importPlaylistCsv,
   importSpotifyPlaylist,
   markSourceLinkBroken,
+  postYoutubeAudioDownload,
   matchPick,
   matchReject,
   matchRejectBatch,
@@ -19,6 +20,7 @@ import {
   matchUndoReject,
   postSourceTopMatches,
   runMatchJob,
+  syncPlaylist,
   sourceWishlistBatch,
 } from "@/api/endpoints";
 import type { LibraryTrack } from "@/api/types";
@@ -37,8 +39,10 @@ import { TableSkeleton } from "@/components/ui/TableSkeleton";
 import type { DlFilter } from "@/components/workspace/DlFilterSelect";
 import { MainViewTabs, type MainView } from "@/components/workspace/MainViewTabs";
 import { PlaylistFilterDropdown } from "@/components/workspace/PlaylistFilterDropdown";
+import { PlaylistImportModal } from "@/components/workspace/PlaylistImportModal";
 import { SourcesFiltersPopover } from "@/components/workspace/SourcesFiltersPopover";
 import { SecondaryPanel } from "@/components/workspace/SecondaryPanel";
+import { collectNonBrokenAmazonLinkUrls } from "@/lib/amazonLinkUtils";
 import { SourceTopMatchContext } from "@/contexts/SourceTopMatchContext";
 import { useLibraryTracks } from "@/hooks/useLibraryTracks";
 import { useMatchCandidates } from "@/hooks/useMatchCandidates";
@@ -80,6 +84,14 @@ function filterSourcesByPlaylists(
 
 const TOP_MATCH_BATCH_STALE_MS = 5 * 60 * 1000;
 
+type PlaylistSyncProgressState = {
+  currentIndex: number;
+  total: number;
+  currentPlaylistName: string | null;
+  processedTracks: number;
+  newSourceTracks: number;
+};
+
 export function WorkspacePage() {
   const { showToast } = useToast();
   const queryClient = useQueryClient();
@@ -103,8 +115,11 @@ export function WorkspacePage() {
     useState<LinkSearchSpinTarget>(null);
   const findLinksMenuRef = useRef<HTMLDivElement>(null);
   const libraryFileRef = useRef<HTMLInputElement>(null);
-  const playlistFileRef = useRef<HTMLInputElement>(null);
+  const [playlistImportModalOpen, setPlaylistImportModalOpen] = useState(false);
   const [spotifyPlaylistInput, setSpotifyPlaylistInput] = useState("");
+  const [syncExistingPlaylistsBusy, setSyncExistingPlaylistsBusy] = useState(false);
+  const [playlistSyncProgress, setPlaylistSyncProgress] =
+    useState<PlaylistSyncProgressState | null>(null);
   const spotifyStatusQuery = useQuery({
     queryKey: queryKeys.spotifyOAuthStatus,
     queryFn: fetchSpotifyOAuthStatus,
@@ -123,6 +138,10 @@ export function WorkspacePage() {
   const sourceColumns = useMemo(() => buildSourceTrackColumns(), []);
   const downloadColumns = useMemo(() => buildDownloadTrackColumns(), []);
   const libraryColumns = useMemo(() => buildLibraryTrackColumns(), []);
+  const spotifyImportedPlaylists = useMemo(
+    () => (playlistsQuery.data ?? []).filter((playlist) => playlist.import_source === "spotify_web_api"),
+    [playlistsQuery.data],
+  );
 
   const markAmazonLinkBrokenMutation = useMutation({
     mutationFn: ({
@@ -136,6 +155,35 @@ export function WorkspacePage() {
       void queryClient.invalidateQueries({
         queryKey: queryKeys.sourceTracks(minMatchScore),
       });
+    },
+    onError: (e: Error) => showToast(e.message, "error"),
+  });
+
+  const youtubeAudioDownloadMutation = useMutation({
+    mutationFn: ({
+      sourceTrackId,
+      url,
+    }: {
+      sourceTrackId: string;
+      url: string;
+    }) => postYoutubeAudioDownload(sourceTrackId, url, { persist: false }),
+    onSuccess: (data) => {
+      const name = data.filename?.trim() || "youtube-audio.m4a";
+      const objectUrl = URL.createObjectURL(data.blob);
+      const a = document.createElement("a");
+      a.href = objectUrl;
+      a.download = name;
+      a.rel = "noopener";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+      if (data.persistedPath) {
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.sourceTracks(minMatchScore),
+        });
+      }
+      showToast(`Downloaded ${name}`, "info");
     },
     onError: (e: Error) => showToast(e.message, "error"),
   });
@@ -218,6 +266,36 @@ export function WorkspacePage() {
     return out;
   }, [mergedSources, selectedSourceIds]);
 
+  const onMarkAllShownLinksBroken = useCallback(async () => {
+    const rows: SourceTrack[] =
+      sourceSelectionCount === 1 && selectedSource
+        ? [selectedSource]
+        : selectedSourcesBulk;
+    if (rows.length === 0) return;
+    let total = 0;
+    for (const s of rows) {
+      const urls = collectNonBrokenAmazonLinkUrls(s);
+      for (const url of urls) {
+        await markAmazonLinkBrokenMutation.mutateAsync({
+          sourceTrackId: s.id,
+          url,
+        });
+        total += 1;
+      }
+    }
+    if (total === 0) {
+      showToast("No links to mark as broken.", "info");
+      return;
+    }
+    showToast(`Marked ${total} link(s) as broken.`, "info");
+  }, [
+    sourceSelectionCount,
+    selectedSource,
+    selectedSourcesBulk,
+    markAmazonLinkBrokenMutation,
+    showToast,
+  ]);
+
   const libraryRows = libraryQuery.data ?? [];
   const selectedLibrary = useMemo(
     () => libraryRows.find((l) => l.id === selectedLibraryId) ?? null,
@@ -298,6 +376,85 @@ export function WorkspacePage() {
       showToast(err instanceof Error ? err.message : String(err), "error");
     },
   });
+
+  const runSyncExistingPlaylists = useCallback(() => {
+    if (syncExistingPlaylistsBusy) return;
+    if (spotifyImportedPlaylists.length === 0) {
+      showToast("No Spotify playlists to sync.", "info");
+      return;
+    }
+
+    setSyncExistingPlaylistsBusy(true);
+    setPlaylistSyncProgress({
+      currentIndex: 0,
+      total: spotifyImportedPlaylists.length,
+      currentPlaylistName: null,
+      processedTracks: 0,
+      newSourceTracks: 0,
+    });
+
+    void (async () => {
+      let processedTracks = 0;
+      let newSourceTracks = 0;
+
+      try {
+        for (const [index, playlist] of spotifyImportedPlaylists.entries()) {
+          setPlaylistSyncProgress({
+            currentIndex: index + 1,
+            total: spotifyImportedPlaylists.length,
+            currentPlaylistName: playlist.name,
+            processedTracks,
+            newSourceTracks,
+          });
+          const result = await syncPlaylist(playlist.id);
+          processedTracks += result.track_count;
+          newSourceTracks += result.new_source_tracks;
+          setPlaylistSyncProgress({
+            currentIndex: index + 1,
+            total: spotifyImportedPlaylists.length,
+            currentPlaylistName: result.playlist_name,
+            processedTracks,
+            newSourceTracks,
+          });
+        }
+
+        void queryClient.invalidateQueries({ queryKey: ["sourceTracks"] });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.playlists });
+        showToast(
+          `${newSourceTracks} new tracks imported from ${spotifyImportedPlaylists.length} playlist(s).`,
+          "info",
+        );
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : String(err), "error");
+      } finally {
+        setSyncExistingPlaylistsBusy(false);
+      }
+    })();
+  }, [
+    queryClient,
+    showToast,
+    spotifyImportedPlaylists,
+    syncExistingPlaylistsBusy,
+  ]);
+
+  const syncProgressLabel = useMemo(() => {
+    if (!playlistSyncProgress) return null;
+    if (playlistSyncProgress.total === 0) return null;
+    const position = `${playlistSyncProgress.currentIndex}/${playlistSyncProgress.total}`;
+    if (playlistSyncProgress.currentPlaylistName) {
+      return `${
+        syncExistingPlaylistsBusy ? "Syncing" : "Last synced"
+      } playlist ${position}: ${playlistSyncProgress.currentPlaylistName}`;
+    }
+    return syncExistingPlaylistsBusy
+      ? `Preparing sync for ${playlistSyncProgress.total} playlist(s)`
+      : `Synced ${playlistSyncProgress.total} playlist(s)`;
+  }, [playlistSyncProgress, syncExistingPlaylistsBusy]);
+
+  const syncProgressDetail = useMemo(() => {
+    if (!playlistSyncProgress) return null;
+    return `${playlistSyncProgress.processedTracks} track(s) processed so far, ${playlistSyncProgress.newSourceTracks} new track(s) imported.`;
+  }, [playlistSyncProgress]);
 
   const pickMatchMutation = useMutation({
     mutationFn: (args: {
@@ -587,58 +744,13 @@ export function WorkspacePage() {
           >
             Import Rekordbox TSV
           </button>
-          <input
-            ref={playlistFileRef}
-            type="file"
-            accept=".csv,text/csv"
-            className="hidden"
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              e.target.value = "";
-              if (!f) return;
-              importPlaylistMutation.mutate(f);
-            }}
-          />
           <button
             type="button"
             className="header-action-surface px-2 py-1 text-[0.75rem] text-primary"
-            onClick={() => playlistFileRef.current?.click()}
+            onClick={() => setPlaylistImportModalOpen(true)}
           >
-            Import playlist CSV
+            Import playlist
           </button>
-          {spotifyConnected ? (
-            <span className="inline-flex max-w-[min(22rem,55vw)] items-center gap-1.5">
-              <input
-                type="text"
-                value={spotifyPlaylistInput}
-                onChange={(e) => setSpotifyPlaylistInput(e.target.value)}
-                placeholder="Spotify playlist URL/id"
-                  aria-label="Spotify playlist URL/id"
-                className="min-w-0 flex-1 rounded border-0 bg-surface-1 px-2 py-1 text-[0.75rem] text-primary outline-none ring-0 placeholder:text-secondary focus:ring-0"
-                disabled={importSpotifyPlaylistMutation.isPending}
-                onKeyDown={(e) => {
-                  if (e.key !== "Enter") return;
-                  const v = spotifyPlaylistInput.trim();
-                  if (!v || importSpotifyPlaylistMutation.isPending) return;
-                  importSpotifyPlaylistMutation.mutate(v);
-                }}
-              />
-              <button
-                type="button"
-                disabled={
-                  !spotifyPlaylistInput.trim() || importSpotifyPlaylistMutation.isPending
-                }
-                className="header-action-surface shrink-0 px-2 py-1 text-[0.75rem] text-primary disabled:text-primary disabled:cursor-not-allowed"
-                onClick={() => {
-                  const v = spotifyPlaylistInput.trim();
-                  if (!v) return;
-                  importSpotifyPlaylistMutation.mutate(v);
-                }}
-              >
-                Import
-              </button>
-            </span>
-          ) : null}
           <LocalScanFolderTrigger
             idleLabel="Folder scan"
             buttonClassName="header-action-surface px-2 py-1 text-[0.75rem] text-primary disabled:text-primary disabled:cursor-not-allowed"
@@ -981,8 +1093,38 @@ export function WorkspacePage() {
                 url,
               });
             }}
+            onMarkAllShownLinksBroken={onMarkAllShownLinksBroken}
+            youtubeAudioDownloadBusy={youtubeAudioDownloadMutation.isPending}
+            onDownloadYoutubeAudio={(url) => {
+              const sid = selectedSource?.id;
+              if (!sid || !url) return;
+              void youtubeAudioDownloadMutation.mutateAsync({
+                sourceTrackId: sid,
+                url,
+              });
+            }}
           />
         }
+      />
+      <PlaylistImportModal
+        open={playlistImportModalOpen}
+        onClose={() => setPlaylistImportModalOpen(false)}
+        spotifyConnected={spotifyConnected}
+        spotifyPlaylistInput={spotifyPlaylistInput}
+        onSpotifyPlaylistInputChange={setSpotifyPlaylistInput}
+        importPlaylistCsvBusy={importPlaylistMutation.isPending}
+        importSpotifyPlaylistBusy={importSpotifyPlaylistMutation.isPending}
+        onImportPlaylistCsv={(file) => importPlaylistMutation.mutate(file)}
+        onImportSpotifyPlaylist={() => {
+          const value = spotifyPlaylistInput.trim();
+          if (!value) return;
+          importSpotifyPlaylistMutation.mutate(value);
+        }}
+        spotifyPlaylistCount={spotifyImportedPlaylists.length}
+        syncExistingPlaylistsBusy={syncExistingPlaylistsBusy}
+        syncProgressLabel={syncProgressLabel}
+        syncProgressDetail={syncProgressDetail}
+        onSyncExistingPlaylists={runSyncExistingPlaylists}
       />
     </AppShell>
   );

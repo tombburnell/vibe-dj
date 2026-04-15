@@ -8,9 +8,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from track_mapper_api.deps import get_current_user_id, get_db
 from track_mapper_api.models.playlist import Playlist
-from track_mapper_api.schemas import PlaylistImportOut, PlaylistOut, SpotifyPlaylistImportIn
+from track_mapper_api.schemas import (
+    PlaylistImportOut,
+    PlaylistOut,
+    PlaylistSyncOut,
+    SpotifyPlaylistImportIn,
+)
 from track_mapper_api.services.playlist_import import import_playlist_csv
-from track_mapper_api.services.spotify_playlist_import import import_public_spotify_playlist
+from track_mapper_api.services.spotify_playlist_import import (
+    import_public_spotify_playlist,
+    sync_saved_spotify_playlist,
+)
 from track_mapper_api.services.spotify_oauth_service import SpotifyNotConnectedError
 from track_mapper_api.services.spotify_web_api import SpotifyPlaylistParseError, SpotifyWebApiError
 
@@ -33,6 +41,7 @@ async def list_playlists(
             id=str(p.id),
             name=p.name,
             import_source=p.import_source,
+            spotify_playlist_url=p.spotify_playlist_url,
             created_at=p.created_at,
         )
         for p in rows
@@ -96,7 +105,7 @@ async def import_spotify_playlist(
     if not raw:
         raise HTTPException(status_code=400, detail="playlist_id_or_url is empty.")
     try:
-        pl_id, linked, new_src = await import_public_spotify_playlist(
+        result = await import_public_spotify_playlist(
             db,
             user_id=user_id,
             playlist_id_or_url=raw,
@@ -124,7 +133,60 @@ async def import_spotify_playlist(
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
     return PlaylistImportOut(
-        playlist_id=str(pl_id),
-        rows_linked=linked,
-        new_source_tracks=new_src,
+        playlist_id=str(result.playlist_id),
+        rows_linked=result.rows_linked,
+        new_source_tracks=result.new_source_tracks,
+    )
+
+
+@router.post("/{playlist_id}/sync", response_model=PlaylistSyncOut)
+async def sync_playlist(
+    playlist_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+) -> PlaylistSyncOut:
+    try:
+        pl_uuid = uuid.UUID(playlist_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="Invalid playlist_id") from e
+
+    res = await db.execute(
+        select(Playlist).where(Playlist.id == pl_uuid, Playlist.user_id == user_id)
+    )
+    playlist = res.scalar_one_or_none()
+    if playlist is None:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+    if playlist.import_source != "spotify_web_api":
+        raise HTTPException(
+            status_code=400,
+            detail="Only Spotify-imported playlists can be synced.",
+        )
+
+    try:
+        result = await sync_saved_spotify_playlist(
+            db,
+            user_id=user_id,
+            playlist=playlist,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except SpotifyPlaylistParseError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except SpotifyNotConnectedError as e:
+        raise HTTPException(status_code=401, detail=str(e)) from e
+    except SpotifyWebApiError as e:
+        if e.status_code == 404:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        if e.status_code == 403:
+            raise HTTPException(status_code=403, detail=str(e)) from e
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+
+    return PlaylistSyncOut(
+        playlist_id=str(result.playlist_id),
+        playlist_name=result.playlist_name,
+        track_count=result.track_count,
+        rows_linked=result.rows_linked,
+        new_source_tracks=result.new_source_tracks,
     )

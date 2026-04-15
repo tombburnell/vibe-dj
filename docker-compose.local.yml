@@ -50,6 +50,8 @@ services:
       - sh
       - -c
       - >-
+        apt-get update &&
+        apt-get install -y --no-install-recommends ffmpeg &&
         uv sync &&
         uv run alembic upgrade head &&
         exec uv run uvicorn track_mapper_api.main:app

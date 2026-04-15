@@ -15,6 +15,7 @@ FastAPI service implementing [`docs/data-model.md`](../../docs/data-model.md): P
 | `DATABASE_URL` | Yes (except tests) | e.g. `postgresql+psycopg://user:pass@localhost:5432/trackmapper` |
 | `DEV_USER_ID` | No | Default tenant when `X-Dev-User-Id` header is absent (default `dev-user`). |
 | `CORS_ORIGINS` | No | Comma-separated; defaults include Vite dev ports. |
+| `YOUTUBE_AUDIO_DIR` | No | Directory for `POST .../youtube-audio` output: default `data/youtube-audio` under the **repo root**, or set an absolute path. Requires **ffmpeg** on `PATH` (Docker Compose installs it). |
 
 ## Database migrations (Postgres)
 
@@ -61,7 +62,8 @@ uv run uvicorn track_mapper_api.main:app --reload --host 0.0.0.0 --port 8000
 6. `GET /api/source-tracks` — flattened source rows with `playlist_names`; `top_match_*` fields are null (use batch endpoint for grid).
 7. `POST /api/source-tracks/top-matches` — JSON `{ "source_track_ids": ["<uuid>", ...] }` (max 100) — best match per id vs latest library snapshot.
 8. `GET /api/source-tracks/{id}/candidates` — matcher top-K for the secondary panel.
-9. `POST /api/match/run` — JSON body optional `library_snapshot_id`, `min_confidence`.
+9. `POST /api/source-tracks/{id}/youtube-audio` — JSON `{ "url": "<YouTube URL on this row>", "persist": false }`; downloads best audio with **yt-dlp**, **ffmpeg** transcodes to **AAC `.m4a`** (Pioneer-friendly), returns **`audio/mp4`** as a **browser download** (`Content-Disposition: attachment`). Optional **`persist: true`**: also copies the same file under `YOUTUBE_AUDIO_DIR` and sets `local_file_path` (response header `X-Persisted-Path`).
+10. `POST /api/match/run` — JSON body optional `library_snapshot_id`, `min_confidence`.
 
 Matching reuses the monorepo [`src/`](../../src) package (`src.track_matching`, `src.rekordbox_index`, `src.rekordbox_tsv_parser`); the API adds the repo root to `sys.path` at runtime.
 

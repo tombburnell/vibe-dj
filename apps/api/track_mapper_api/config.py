@@ -77,6 +77,20 @@ def get_dev_user_id() -> str:
     return os.environ.get("DEV_USER_ID", "dev-user").strip() or "dev-user"
 
 
+def get_repo_root() -> Path:
+    """Monorepo root (parent of ``apps/``). ``track_mapper_api`` lives under ``apps/api/``."""
+    return Path(__file__).resolve().parent.parent.parent.parent
+
+
+def get_youtube_audio_dir() -> Path:
+    """Directory for server-side YouTube audio files (bind-mounted repo in Docker)."""
+    raw = os.environ.get("YOUTUBE_AUDIO_DIR", "data/youtube-audio").strip()
+    p = Path(raw)
+    if p.is_absolute():
+        return p
+    return get_repo_root() / p
+
+
 def get_spotify_client_credentials() -> tuple[str, str]:
     """Client id + secret for Spotify Web API (client-credentials flow).
 

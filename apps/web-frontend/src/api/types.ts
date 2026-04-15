@@ -24,7 +24,16 @@ export type Playlist = {
   id: string;
   name: string;
   import_source: string | null;
+  spotify_playlist_url: string | null;
   created_at: string;
+};
+
+export type PlaylistSyncResult = {
+  playlist_id: string;
+  playlist_name: string;
+  track_count: number;
+  rows_linked: number;
+  new_source_tracks: number;
 };
 
 export type MatchCandidate = LibraryTrack & {

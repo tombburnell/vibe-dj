@@ -1,10 +1,18 @@
-import { apiDelete, apiGet, apiPostFormData, apiPostJson, apiPutJson } from "./client";
+import {
+  apiDelete,
+  apiGet,
+  apiPostBlobDownload,
+  apiPostFormData,
+  apiPostJson,
+  apiPutJson,
+} from "./client";
 import type {
   FindAmazonLinksResult,
   LocalScanResult,
   LibraryTrackPage,
   MatchCandidate,
   Playlist,
+  PlaylistSyncResult,
   SetLocalFileResult,
   SourceTopMatchRow,
   SourceTrack,
@@ -70,6 +78,17 @@ export function findAmazonLinks(body: {
       ? { web_search_provider: body.web_search_provider }
       : {}),
   });
+}
+
+export function postYoutubeAudioDownload(
+  sourceTrackId: string,
+  url: string,
+  options: { persist?: boolean } = {},
+): ReturnType<typeof apiPostBlobDownload> {
+  return apiPostBlobDownload(
+    `/api/source-tracks/${encodeURIComponent(sourceTrackId)}/youtube-audio`,
+    { url, persist: options.persist ?? false },
+  );
 }
 
 export function markSourceLinkBroken(
@@ -281,6 +300,13 @@ export function importSpotifyPlaylist(body: {
     payload.playlist_name = body.playlist_name.trim();
   }
   return apiPostJson("/api/playlists/import-spotify", payload);
+}
+
+export function syncPlaylist(playlistId: string): Promise<PlaylistSyncResult> {
+  return apiPostJson<PlaylistSyncResult>(
+    `/api/playlists/${encodeURIComponent(playlistId)}/sync`,
+    {},
+  );
 }
 
 export function runMatchJob(body: {

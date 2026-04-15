@@ -44,6 +44,8 @@ class Playlist(Base):
     import_source: Mapped[str | None] = mapped_column(String(64), nullable=True)
     #: Spotify catalog id when imported via Web API; used to merge re-imports.
     spotify_playlist_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: Original Spotify playlist URL/URI/raw id input for later re-syncs.
+    spotify_playlist_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow
     )

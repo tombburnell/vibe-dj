@@ -2,9 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import shutil
+import tempfile
 import uuid
+from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,6 +39,7 @@ from track_mapper_api.schemas import (
     SourceTrackOut,
     SourceWishlistBatchIn,
     SourceWishlistBatchOut,
+    YoutubeAudioDownloadIn,
 )
 from track_mapper_api.services.find_amazon_links import find_amazon_links_for_user
 from track_mapper_api.services.web_search_service import display_link_title
@@ -46,11 +55,38 @@ from track_mapper_api.services.local_download_scan import (
 )
 from track_mapper_api.services.source_link_broken import mark_source_amazon_link_broken
 from track_mapper_api.services.source_track_wishlist import set_wishlist_batch
+from track_mapper_api.config import get_youtube_audio_dir
+from track_mapper_api.services.youtube_audio_download import (
+    copy_m4a_to_library_dir,
+    download_and_transcode_youtube_m4a,
+    relative_audio_path_from_absolute,
+    source_track_contains_youtube_url,
+)
 
 router = APIRouter(prefix="/source-tracks", tags=["source-tracks"])
+logger = logging.getLogger(__name__)
+
+
+def _attachment_content_disposition(filename: str) -> str:
+    ascii_fallback = (
+        "".join(ch if ord(ch) < 128 and ch not in '\\"' else "_" for ch in filename).strip()
+        or "track.m4a"
+    )
+    enc = quote(filename, safe="")
+    return f'attachment; filename="{ascii_fallback}"; filename*=UTF-8\'\'{enc}'
 
 # Legacy rows stored ``matched_domain`` in ``artist``; UI joins title + artist with " — ".
-_KNOWN_SITE_ARTIST_PLACEHOLDERS = frozenset({"amazon.com", "soundcloud.com", "tidal.com", "beatport.com"})
+_KNOWN_SITE_ARTIST_PLACEHOLDERS = frozenset(
+    {
+        "amazon.com",
+        "soundcloud.com",
+        "tidal.com",
+        "beatport.com",
+        "youtube.com",
+        "youtu.be",
+        "bandcamp.com",
+    }
+)
 
 
 def _amazon_candidates_from_db(
@@ -410,6 +446,101 @@ async def post_local_scan(
         ],
         skipped_non_audio=result.skipped_non_audio,
         min_score=body.min_score,
+    )
+
+
+@router.post("/{source_track_id}/youtube-audio")
+async def post_source_youtube_audio(
+    source_track_id: str,
+    body: YoutubeAudioDownloadIn,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+) -> FileResponse:
+    """Transcode YouTube audio to AAC ``.m4a`` and stream it to the client (browser download).
+
+    Optional ``persist``: copy the same file under ``YOUTUBE_AUDIO_DIR`` and set ``local_file_path``.
+    """
+    try:
+        sid = uuid.UUID(source_track_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="Invalid source_track_id") from e
+    url = body.url.strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="url is required")
+
+    res = await db.execute(
+        select(SourceTrack).where(
+            SourceTrack.user_id == user_id,
+            SourceTrack.id == sid,
+        )
+    )
+    row = res.scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Source track not found")
+    if not source_track_contains_youtube_url(row, url):
+        raise HTTPException(
+            status_code=400,
+            detail="URL is not a YouTube link on this track",
+        )
+
+    artist = row.artist or ""
+    title = row.title or ""
+    loop = asyncio.get_running_loop()
+    tmp_root = Path(tempfile.mkdtemp(prefix="yt-audio-"))
+
+    def run_pipeline() -> Path:
+        return download_and_transcode_youtube_m4a(
+            artist=artist,
+            title=title,
+            page_url=url,
+            work_dir=tmp_root,
+        )
+
+    try:
+        m4a_path = await loop.run_in_executor(None, run_pipeline)
+    except ValueError as e:
+        shutil.rmtree(tmp_root, ignore_errors=True)
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except RuntimeError as e:
+        shutil.rmtree(tmp_root, ignore_errors=True)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    except Exception as e:
+        shutil.rmtree(tmp_root, ignore_errors=True)
+        logger.exception("YouTube audio download failed for source %s", sid)
+        raise HTTPException(
+            status_code=500,
+            detail="YouTube download failed (check API logs and ffmpeg)",
+        ) from e
+
+    stream_path = m4a_path
+    headers: dict[str, str] = {
+        "Content-Disposition": _attachment_content_disposition(m4a_path.name),
+    }
+
+    if body.persist:
+        final = copy_m4a_to_library_dir(m4a_path, get_youtube_audio_dir())
+        rel = relative_audio_path_from_absolute(final)
+        try:
+            row2 = await set_source_local_file(
+                db,
+                user_id=user_id,
+                source_track_id=sid,
+                display_path=rel,
+            )
+        except ValueError as e:
+            shutil.rmtree(tmp_root, ignore_errors=True)
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        if row2 is None:
+            shutil.rmtree(tmp_root, ignore_errors=True)
+            raise HTTPException(status_code=404, detail="Source track not found")
+        stream_path = final
+        headers["X-Persisted-Path"] = rel
+
+    return FileResponse(
+        path=str(stream_path),
+        media_type="audio/mp4",
+        headers=headers,
+        background=BackgroundTask(lambda: shutil.rmtree(tmp_root, ignore_errors=True)),
     )
 
 

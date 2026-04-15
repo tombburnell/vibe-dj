@@ -89,6 +89,7 @@ async def import_playlist_tracks(
     import_source: str,
     source_kind: str,
     spotify_playlist_id: str | None = None,
+    spotify_playlist_url: str | None = None,
 ) -> tuple[uuid.UUID, int, int]:
     """Create or reuse playlist, upsert source_tracks (Spotify dedupe), attach M2M.
 
@@ -103,6 +104,7 @@ async def import_playlist_tracks(
     if spotify_playlist_id and spotify_playlist_id.strip():
         raw = spotify_playlist_id.strip()
         norm_spotify_pl = raw[:64] if len(raw) > 64 else raw
+    norm_spotify_url = spotify_playlist_url.strip()[:2048] if spotify_playlist_url and spotify_playlist_url.strip() else None
 
     pl: Playlist | None = None
     if norm_spotify_pl is not None:
@@ -118,6 +120,8 @@ async def import_playlist_tracks(
         pl = res.scalars().first()
         if pl is not None:
             pl.name = display_name
+            if norm_spotify_url is not None:
+                pl.spotify_playlist_url = norm_spotify_url
 
     if pl is None and norm_spotify_pl is None:
         res = await db.execute(
@@ -140,6 +144,7 @@ async def import_playlist_tracks(
             name=display_name,
             import_source=import_source,
             spotify_playlist_id=norm_spotify_pl,
+            spotify_playlist_url=norm_spotify_url,
         )
         db.add(pl)
         await db.flush()

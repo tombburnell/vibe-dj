@@ -190,6 +190,12 @@ class SetLocalFileOut(BaseModel):
     artist: str
 
 
+class YoutubeAudioDownloadIn(BaseModel):
+    url: str = Field(..., min_length=12, max_length=2048)
+    #: Also copy the same ``.m4a`` under ``YOUTUBE_AUDIO_DIR`` and set ``local_file_path``.
+    persist: bool = False
+
+
 class LibrarySnapshotImportOut(BaseModel):
     snapshot_id: str
     track_count: int
@@ -197,6 +203,14 @@ class LibrarySnapshotImportOut(BaseModel):
 
 class PlaylistImportOut(BaseModel):
     playlist_id: str
+    rows_linked: int
+    new_source_tracks: int
+
+
+class PlaylistSyncOut(BaseModel):
+    playlist_id: str
+    playlist_name: str
+    track_count: int
     rows_linked: int
     new_source_tracks: int
 
@@ -230,6 +244,7 @@ class PlaylistOut(BaseModel):
     id: str
     name: str
     import_source: str | None = None
+    spotify_playlist_url: str | None = None
     created_at: datetime
 
 

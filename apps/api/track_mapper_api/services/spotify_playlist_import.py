@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from track_mapper_api.models.playlist import Playlist
 from track_mapper_api.config import get_spotify_market
 from track_mapper_api.services.playlist_import import PlaylistTrackInput, import_playlist_tracks
 from track_mapper_api.services.spotify_oauth_service import (
@@ -19,13 +21,22 @@ from track_mapper_api.services.spotify_web_api import (
 )
 
 
-async def import_public_spotify_playlist(
+@dataclass(frozen=True)
+class SpotifyPlaylistImportResult:
+    playlist_id: uuid.UUID
+    playlist_name: str
+    track_count: int
+    rows_linked: int
+    new_source_tracks: int
+
+
+async def _import_spotify_playlist(
     db: AsyncSession,
     *,
     user_id: str,
     playlist_id_or_url: str,
     playlist_name_override: str | None = None,
-) -> tuple[uuid.UUID, int, int]:
+) -> SpotifyPlaylistImportResult:
     playlist_id = parse_spotify_playlist_id(playlist_id_or_url)
     access = await get_spotify_user_access_token(db, user_id=user_id)
     if access is None:
@@ -47,6 +58,9 @@ async def import_public_spotify_playlist(
     else:
         display_name = f"Spotify playlist {playlist_id}"
 
+    raw_ref = playlist_id_or_url.strip()
+    playlist_ref = raw_ref or playlist_id
+    playlist_url = raw_ref if "open.spotify.com/" in raw_ref.lower() else None
     tracks = [
         PlaylistTrackInput(
             title=row.title,
@@ -58,7 +72,7 @@ async def import_public_spotify_playlist(
         for row in bundle.tracks
     ]
 
-    return await import_playlist_tracks(
+    playlist_row_id, linked, new_src = await import_playlist_tracks(
         db,
         user_id=user_id,
         name=display_name,
@@ -66,4 +80,44 @@ async def import_public_spotify_playlist(
         import_source="spotify_web_api",
         source_kind="spotify_web_api",
         spotify_playlist_id=playlist_id,
+        spotify_playlist_url=playlist_url,
+    )
+    return SpotifyPlaylistImportResult(
+        playlist_id=playlist_row_id,
+        playlist_name=display_name,
+        track_count=len(tracks),
+        rows_linked=linked,
+        new_source_tracks=new_src,
+    )
+
+
+async def import_public_spotify_playlist(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    playlist_id_or_url: str,
+    playlist_name_override: str | None = None,
+) -> SpotifyPlaylistImportResult:
+    return await _import_spotify_playlist(
+        db,
+        user_id=user_id,
+        playlist_id_or_url=playlist_id_or_url,
+        playlist_name_override=playlist_name_override,
+    )
+
+
+async def sync_saved_spotify_playlist(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    playlist: Playlist,
+) -> SpotifyPlaylistImportResult:
+    playlist_ref = playlist.spotify_playlist_url or playlist.spotify_playlist_id
+    if playlist_ref is None or not playlist_ref.strip():
+        raise ValueError("Playlist has no saved Spotify URL or playlist id.")
+    return await _import_spotify_playlist(
+        db,
+        user_id=user_id,
+        playlist_id_or_url=playlist_ref,
+        playlist_name_override=playlist.name,
     )
