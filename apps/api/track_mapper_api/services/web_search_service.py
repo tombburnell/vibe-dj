@@ -83,7 +83,7 @@ def ddg_search(*, query: str, max_results: int, backend: str | None = None) -> l
         return []
 
 
-def serper_search(*, query: str, max_results: int, api_key: str) -> list[dict[str, str]]:
+def serper_search(*, query: str, country: str = "us", max_results: int, api_key: str) -> list[dict[str, str]]:
     """POST to Serper Google search; normalize organic hits to ``href`` / ``title`` / ``body``.
 
     Payload matches Serper docs (``q`` only). Result list is capped to ``max_results`` client-side.
@@ -96,7 +96,7 @@ def serper_search(*, query: str, max_results: int, api_key: str) -> list[dict[st
         resp = requests.post(
             SERPER_SEARCH_URL,
             headers={"X-API-KEY": key, "Content-Type": "application/json"},
-            json={"q": query},
+            json={"q": query, "gl": country},
             timeout=30,
         )
         resp.raise_for_status()
@@ -286,26 +286,23 @@ def _canonical_url_key(url: str) -> str:
     return f"{scheme}://{netloc}{path}".lower()
 
 
+def _listing_path_rank_boost(url: str) -> float:
+    """Prefer track listing URLs over album pages when ranking (path hints; any host)."""
+    try:
+        path = (urllib.parse.urlsplit(str(url).strip()).path or "").lower()
+    except Exception:
+        return 0.0
+    if "/tracks/" in path or "/browse/track/" in path:
+        return 40.0
+    if "/albums/" in path or "/album/" in path:
+        return 20.0
+    return 0.0
+
+
 def default_site_rules() -> tuple[SiteSearchRule, ...]:
     """Default ordered sites; per-domain URL excludes drop non-track-style pages."""
-    return (
-        # SiteSearchRule(
-        #     domain="tidal.com",
-        #     url_exclude_patterns=(r"/browse/artist/",),
-        #     url_transforms=(
-        #         # /browse/album/{id} redirects to /album/{id}
-        #         (r"/browse/album/", "/album/"),
-        #     ),
-        #     title_transforms=((r"\s+on\s+TIDAL\s*$", ""),),
-        # ),
-        SiteSearchRule(
-            domain="amazon.com",
-            url_exclude_patterns=(
-                # r"/albums?/",
-                # r"/album(/|$|\?)",
-                r"/artists?/",
-            ),
-            title_transforms=(
+
+    amazonTransforms = (
                 # e.g. "Amazon.com: Blondie Mix."
                 (r"^Amazon\.com:\s*", ""),
                 # Long SERP clause first (before stripping a shorter leading "Play ")
@@ -325,7 +322,35 @@ def default_site_rules() -> tuple[SiteSearchRule, ...]:
                 (r"\s+on\s+Amazon\s+Music\s*$", ""),
                 # e.g. "… : Armand Van Helden: Digital Music"
                 (r"\s*:\s*Digital\s+Music\s*$", ""),
-            ),
+            )
+
+    amazonUrlExcludes = (
+        r"/artists?/",
+    )
+    return (
+        # SiteSearchRule(
+        #     domain="tidal.com",
+        #     url_exclude_patterns=(r"/browse/artist/",),
+        #     url_transforms=(
+        #         # /browse/album/{id} redirects to /album/{id}
+        #         (r"/browse/album/", "/album/"),
+        #     ),
+        #     title_transforms=((r"\s+on\s+TIDAL\s*$", ""),),
+        # ),
+        SiteSearchRule(
+            domain="amazon.com",
+            url_exclude_patterns=amazonUrlExcludes,
+            title_transforms=amazonTransforms,
+        ),
+        SiteSearchRule(
+            domain="amazon.co.uk",
+            url_exclude_patterns=amazonUrlExcludes,
+            title_transforms=amazonTransforms,
+        ),
+        SiteSearchRule(
+            domain="music.amazon.com",
+            url_exclude_patterns=amazonUrlExcludes,
+            title_transforms=amazonTransforms,
         ),
         SiteSearchRule(
             domain="soundcloud.com",
@@ -440,9 +465,11 @@ def build_multisite_ddg_query(
     """Single DDG query: (site:x OR site:y) artist track suffix."""
     site_parts = [f"site:{s.domain}" for s in sites]
     site_clause = "(" + " OR ".join(site_parts) + ")"
-    a = (artist or "").strip()
-    t = (track or "").strip()
-    return f"{site_clause} {a} {t} {suffix}".strip()
+    a = re.sub(r"\([^)]*\)", "", (artist or "")).strip()
+    t = re.sub(r"\([^)]*\)", "", (track or "")).strip()
+    # Wendys yard ekkah amazon (site:amazon.com OR site:amazon.co.uk OR site:youtube.com OR site:soundcloud.com OR site:beatport.com OR site:bandcamp.com)
+    return f"{t} {a} {suffix} {site_clause}".strip()
+    # return f"{site_clause} {a} {t} {suffix}".strip()
 
 
 class MultiSiteWebSearcher:
@@ -452,7 +479,7 @@ class MultiSiteWebSearcher:
         self,
         *,
         sites: tuple[SiteSearchRule, ...] | None = None,
-        query_suffix: str = "",
+        query_suffix: str = " amazon ",
     ) -> None:
         self.sites: tuple[SiteSearchRule, ...] = sites if sites is not None else default_site_rules()
         self.query_suffix = query_suffix
@@ -495,10 +522,14 @@ class MultiSiteWebSearcher:
         Set ``trace=True`` to log human-readable FILTERED / TRANSFORMED / DEDUPED lines (INFO).
         """
         query = self.build_query(artist=artist, track=track)
+
+        
         # Fetch enough raw rows to reorder by domain; then slice to max_results.
         fetch_n = min(DDG_TEXT_MAX_RESULTS, max(25, max_results))
         site_index_by_domain = {r.domain: i for i, r in enumerate(self.sites)}
         staged: list[tuple[int, int, WebSearchHit]] = []
+
+        logger.info("Query: %s %s %s", query, fetch_n, web_search_provider)
 
         if web_search_provider == "serper":
             provider = "serper"
@@ -507,7 +538,7 @@ class MultiSiteWebSearcher:
                 logger.warning("web search serper requested but SERPER_API_KEY is empty")
                 raw = []
             else:
-                raw = serper_search(query=query, max_results=fetch_n, api_key=key)
+                raw = serper_search(query=query, max_results=fetch_n, api_key=key, country="gb")
         elif web_search_provider == "ddg":
             provider = "ddg"
             raw = ddg_search(query=query, max_results=fetch_n)
@@ -607,7 +638,9 @@ class MultiSiteWebSearcher:
         match_q = match_query_for_track(artist, track)
         by_domain: dict[str, list[tuple[float, int, int, WebSearchHit]]] = {}
         for site_i, ddg_i, hit in deduped:
-            hit.match_score = score_web_hit_snippet(hit, match_q)
+            hit.match_score = score_web_hit_snippet(hit, match_q) + _listing_path_rank_boost(
+                hit.url
+            )
             dom = hit.matched_domain or ""
             by_domain.setdefault(dom, []).append((hit.match_score, site_i, ddg_i, hit))
         capped: list[tuple[float, int, int, WebSearchHit]] = []

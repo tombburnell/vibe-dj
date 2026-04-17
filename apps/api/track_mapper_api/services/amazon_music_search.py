@@ -216,7 +216,6 @@ class AmazonMusicSearcher:
                     is_album = "/albums/" in url_lower
                     if not (is_track or is_album):
                         continue
-                    is_artist_page = "/artists/" in url_lower
                     price = None
                     price_match = re.search(r"\$[\d.]+", body)
                     if price_match:
@@ -236,7 +235,9 @@ class AmazonMusicSearcher:
                         result_title,
                         match_query,
                     )
-                    if not is_artist_page:
+                    if is_track:
+                        match_score += 40.0
+                    elif is_album:
                         match_score += 20.0
                     page_title = title if title else None
                     if not page_title and result_title and artist:

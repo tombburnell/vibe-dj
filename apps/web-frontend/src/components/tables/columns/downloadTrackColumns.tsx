@@ -61,9 +61,9 @@ export function buildDownloadTrackColumns(): ColumnDef<SourceTrack>[] {
   return [
     {
       accessorKey: "title",
-      size: 216,
-      minSize: 72,
-      maxSize: 560,
+      size: 300,
+      minSize: 70,
+      maxSize: 500,
       header: ({ column }) => <SortableHeader column={column}>Title</SortableHeader>,
       cell: (ctx) => (
         <span className="text-[length:var(--text-src-triple)] font-medium text-primary">
@@ -74,8 +74,8 @@ export function buildDownloadTrackColumns(): ColumnDef<SourceTrack>[] {
     },
     {
       accessorKey: "artist",
-      size: 144,
-      minSize: 48,
+      size: 200,
+      minSize: 120,
       maxSize: 560,
       header: ({ column }) => <SortableHeader column={column}>Artist</SortableHeader>,
       cell: (ctx) => (
@@ -107,9 +107,9 @@ export function buildDownloadTrackColumns(): ColumnDef<SourceTrack>[] {
       id: "spotify_play",
       accessorFn: (row) => row.spotify_id ?? "",
       enableSorting: false,
-      size: 40,
+      size: 60,
       minSize: 36,
-      maxSize: 56,
+      maxSize: 82,
       header: ({ column }) => (
         <SortableHeader column={column} title="Open in Spotify app">
           Play
@@ -120,7 +120,7 @@ export function buildDownloadTrackColumns(): ColumnDef<SourceTrack>[] {
     {
       id: "best_link",
       accessorFn: (row) => row.amazon_url ?? "\0empty",
-      size: 120,
+      size: 300,
       minSize: 64,
       maxSize: 400,
       header: ({ column }) => <SortableHeader column={column}>Link</SortableHeader>,
@@ -151,10 +151,23 @@ export function buildDownloadTrackColumns(): ColumnDef<SourceTrack>[] {
       sortUndefined: "last",
       sortingFn: "basic",
     },
+    
+    {
+      id: "downloaded",
+      accessorFn: (row) => (row.local_file_path || row.manual_dl ? 1 : 0),
+      size: 70,
+      minSize: 50,
+      maxSize: 100,
+      header: ({ column }) => (
+        <SortableHeader column={column}>DL</SortableHeader>
+      ),
+      cell: ({ row }) => <DownloadedCell row={row} />,
+      sortingFn: "basic",
+    },
     {
       id: "playlists",
       accessorFn: (row) => (row.playlist_names ?? []).join(", "),
-      size: 107,
+      size: 300,
       minSize: 56,
       maxSize: 480,
       header: ({ column }) => (
@@ -180,18 +193,6 @@ export function buildDownloadTrackColumns(): ColumnDef<SourceTrack>[] {
         );
       },
       sortUndefined: "last",
-    },
-    {
-      id: "downloaded",
-      accessorFn: (row) => (row.local_file_path ? 1 : 0),
-      size: 44,
-      minSize: 36,
-      maxSize: 72,
-      header: ({ column }) => (
-        <SortableHeader column={column}>DL</SortableHeader>
-      ),
-      cell: ({ row }) => <DownloadedCell row={row} />,
-      sortingFn: "basic",
     },
   ];
 }

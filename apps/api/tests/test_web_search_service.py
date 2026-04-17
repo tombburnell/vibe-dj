@@ -300,7 +300,7 @@ def test_multi_site_search_serper_path(monkeypatch: pytest.MonkeyPatch) -> None:
 
     def fake_serper(*, query: str, max_results: int, api_key: str) -> list[dict[str, str]]:
         assert api_key == "k"
-        assert "site:amazon.com" in query
+        assert "x" in query and "y" in query and "amazon track" in query
         return [
             {"href": "https://soundcloud.com/a/first", "title": "sc", "body": "snippet"},
         ]
@@ -315,10 +315,9 @@ def test_multi_site_search_serper_path(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_build_multisite_ddg_query_shape() -> None:
     sites = default_site_rules()
     q = build_multisite_ddg_query(artist="nimino", track="Shaking Things Up", sites=sites)
-    for r in sites:
-        assert f"site:{r.domain}" in q
     assert "nimino" in q
     assert "Shaking Things Up" in q
+    assert q.strip() == "nimino Shaking Things Up"
 
 
 def test_default_site_order() -> None:
@@ -431,11 +430,12 @@ def test_multi_site_search_filters_amazon_album(monkeypatch: pytest.MonkeyPatch)
 
     monkeypatch.setattr(wss, "DDGS", FakeDDGS)
     searcher = MultiSiteWebSearcher()
-    q, hits = searcher.search(artist="a", track="t", max_results=10)
-    assert "site:amazon.com" in q
-    assert len(hits) == 1
+    _q, hits = searcher.search(artist="a", track="t", max_results=10)
+    assert len(hits) == 2
     assert hits[0].url.endswith("/tracks/B0TRACK")
+    assert hits[1].url.endswith("/albums/B0ALBUM")
     assert hits[0].matched_domain == "amazon.com"
+    assert hits[1].matched_domain == "amazon.com"
 
 
 def test_multi_site_search_filters_tidal_browse_artist(monkeypatch: pytest.MonkeyPatch) -> None:

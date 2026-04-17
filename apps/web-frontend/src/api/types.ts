@@ -101,6 +101,11 @@ export type SetLocalFileResult = {
   artist: string;
 };
 
+export type SetManualDlResult = {
+  source_track_id: string;
+  manual_dl: boolean;
+};
+
 export type FindAmazonLinksResult = {
   searched_count: number;
   skipped_not_need_count: number;
@@ -130,6 +135,7 @@ export type SourceTrack = {
   playlist_ids: string[];
   local_file_path: string | null;
   downloaded_at: string | null;
+  manual_dl: boolean;
   amazon_url: string | null;
   amazon_search_url: string | null;
   amazon_price: string | null;

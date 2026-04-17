@@ -322,6 +322,7 @@ async def run_local_download_scan(
             continue
         row.local_file_path = path
         row.downloaded_at = now
+        row.manual_dl = False
         matched.append(
             LocalScanMatch(
                 source_track_id=sid,
@@ -370,6 +371,7 @@ async def set_source_local_file(
         return None
     row.local_file_path = raw
     row.downloaded_at = datetime.now(timezone.utc)
+    row.manual_dl = False
     return row
 
 
@@ -391,3 +393,23 @@ async def clear_source_local_file(
     row.local_file_path = None
     row.downloaded_at = None
     return True
+
+
+async def set_source_manual_dl(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    source_track_id: uuid.UUID,
+    manual_dl: bool,
+) -> SourceTrack | None:
+    res = await db.execute(
+        select(SourceTrack).where(
+            SourceTrack.user_id == user_id,
+            SourceTrack.id == source_track_id,
+        )
+    )
+    row = res.scalar_one_or_none()
+    if row is None:
+        return None
+    row.manual_dl = manual_dl
+    return row

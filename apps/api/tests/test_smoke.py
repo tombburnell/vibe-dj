@@ -139,8 +139,9 @@ def test_match_run_with_library_and_sources(client: TestClient) -> None:
     listed_src = client.get("/api/source-tracks").json()
     assert len(listed_src) == 1
     assert listed_src[0]["playlist_names"] == ["koko_groove"]
-    # List GET embeds best-match overlay (same rules as POST /top-matches).
-    assert listed_src[0]["top_match_title"] == "Test Song One"
+    # List GET is cheap now: persisted link state only, no fuzzy top-match payload.
+    assert listed_src[0]["top_match_title"] is None
+    assert listed_src[0]["top_match_library_track_id"] is None
     assert listed_src[0]["top_match_is_picked"] is False
     assert listed_src[0]["is_rejected_no_match"] is False
     sid = listed_src[0]["id"]
@@ -227,6 +228,11 @@ def test_match_reject_batch(client: TestClient) -> None:
     r = client.post("/api/match/reject/batch", json={"source_track_ids": [sid, sid]})
     assert r.status_code == 200
     assert r.json() == {"ok": True, "rejected_count": 1}
+
+    listed = client.get("/api/source-tracks").json()
+    assert len(listed) == 1
+    assert listed[0]["is_rejected_no_match"] is True
+    assert listed[0]["top_match_title"] is None
 
     top = client.post(
         "/api/source-tracks/top-matches",

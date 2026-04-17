@@ -24,7 +24,7 @@ export function buildSourceTrackColumns(): ColumnDef<SourceTrack>[] {
   return [
     {
       accessorKey: "title",
-      size: 216,
+      size: 300,
       minSize: 72,
       maxSize: 560,
       header: ({ column }) => <SortableHeader column={column}>Title</SortableHeader>,
@@ -37,7 +37,7 @@ export function buildSourceTrackColumns(): ColumnDef<SourceTrack>[] {
     },
     {
       accessorKey: "artist",
-      size: 144,
+      size: 200,
       minSize: 48,
       maxSize: 560,
       header: ({ column }) => <SortableHeader column={column}>Artist</SortableHeader>,
@@ -70,9 +70,9 @@ export function buildSourceTrackColumns(): ColumnDef<SourceTrack>[] {
       id: "spotify_play",
       accessorFn: (row) => row.spotify_id ?? "",
       enableSorting: false,
-      size: 40,
+      size: 60,
       minSize: 36,
-      maxSize: 56,
+      maxSize: 112,
       header: ({ column }) => (
         <SortableHeader column={column} title="Open in Spotify app">
           Play
@@ -90,9 +90,9 @@ export function buildSourceTrackColumns(): ColumnDef<SourceTrack>[] {
             : row.top_match_score != null
               ? `${row.top_match_title ?? ""}\t${row.top_match_artist ?? ""}`
               : "",
-      size: 88,
-      minSize: 48,
-      maxSize: 560,
+      size: 200,
+      minSize: 64,
+      maxSize: 400,
       header: ({ column }) => (
         <SortableHeader column={column}>Best match</SortableHeader>
       ),
@@ -123,9 +123,21 @@ export function buildSourceTrackColumns(): ColumnDef<SourceTrack>[] {
       sortingFn: "basic",
     },
     {
+      id: "downloaded",
+      accessorFn: (row) => (row.local_file_path || row.manual_dl ? 1 : 0),
+      size: 76,
+      minSize: 64,
+      maxSize: 104,
+      header: ({ column }) => (
+        <SortableHeader column={column}>DL</SortableHeader>
+      ),
+      cell: ({ row }) => <DownloadedCell row={row} />,
+      sortingFn: "basic",
+    },
+    {
       id: "playlists",
       accessorFn: (row) => (row.playlist_names ?? []).join(", "),
-      size: 107,
+      size: 300,
       minSize: 56,
       maxSize: 480,
       header: ({ column }) => (
@@ -152,17 +164,6 @@ export function buildSourceTrackColumns(): ColumnDef<SourceTrack>[] {
       },
       sortUndefined: "last",
     },
-    {
-      id: "downloaded",
-      accessorFn: (row) => (row.local_file_path ? 1 : 0),
-      size: 44,
-      minSize: 36,
-      maxSize: 72,
-      header: ({ column }) => (
-        <SortableHeader column={column}>DL</SortableHeader>
-      ),
-      cell: ({ row }) => <DownloadedCell row={row} />,
-      sortingFn: "basic",
-    },
+   
   ];
 }

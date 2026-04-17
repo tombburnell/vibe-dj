@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from track_mapper_api.services.youtube_audio_download import (
+    download_and_transcode_youtube_m4a,
     source_track_contains_youtube_url,
     youtube_video_id,
 )
@@ -41,3 +43,46 @@ def test_source_track_contains_youtube_url_matches_primary_and_candidates() -> N
     assert source_track_contains_youtube_url(st, "https://youtu.be/abc111defgh") is True
     assert source_track_contains_youtube_url(st, "https://www.youtube.com/watch?v=zzzzzzzzzzz") is True
     assert source_track_contains_youtube_url(st, "https://www.youtube.com/watch?v=otherothero") is False
+
+
+def test_download_and_transcode_youtube_m4a_skips_ffmpeg_when_ytdlp_writes_m4a(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    output_file = tmp_path / "Artist - Title [abcdefghijk].m4a"
+
+    class FakeYoutubeDL:
+        def __init__(self, opts: dict[str, object]) -> None:
+            self.opts = opts
+
+        def __enter__(self) -> "FakeYoutubeDL":
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+        def download(self, urls: list[str]) -> None:
+            assert urls == ["https://www.youtube.com/watch?v=abcdefghijk"]
+            output_file.write_bytes(b"fake m4a bytes")
+
+    def fail_if_called(src: Path, dest: Path) -> None:
+        raise AssertionError(f"ffmpeg should not run for {src} -> {dest}")
+
+    monkeypatch.setattr(
+        "track_mapper_api.services.youtube_audio_download.yt_dlp.YoutubeDL",
+        FakeYoutubeDL,
+    )
+    monkeypatch.setattr(
+        "track_mapper_api.services.youtube_audio_download._ffmpeg_transcode_aac_m4a",
+        fail_if_called,
+    )
+
+    result = download_and_transcode_youtube_m4a(
+        artist="Artist",
+        title="Title",
+        page_url="https://www.youtube.com/watch?v=abcdefghijk",
+        work_dir=tmp_path,
+    )
+
+    assert result == output_file
+    assert result.read_bytes() == b"fake m4a bytes"

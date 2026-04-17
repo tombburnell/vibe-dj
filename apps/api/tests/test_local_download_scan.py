@@ -68,6 +68,7 @@ def test_local_scan_and_clear(client: TestClient) -> None:
     listed = client.get("/api/source-tracks").json()
     assert len(listed) == 1
     assert listed[0]["local_file_path"] == "Music/Test Artist - Wishlist Row.mp3"
+    assert listed[0]["manual_dl"] is False
     sid = listed[0]["id"]
 
     clear = client.delete(f"/api/source-tracks/{sid}/local-file")
@@ -77,6 +78,7 @@ def test_local_scan_and_clear(client: TestClient) -> None:
     listed2 = client.get("/api/source-tracks").json()
     assert listed2[0]["local_file_path"] is None
     assert listed2[0]["downloaded_at"] is None
+    assert listed2[0]["manual_dl"] is False
 
     put = client.put(
         f"/api/source-tracks/{sid}/local-file",
@@ -90,6 +92,88 @@ def test_local_scan_and_clear(client: TestClient) -> None:
 
     listed3 = client.get("/api/source-tracks").json()
     assert listed3[0]["local_file_path"] == "Music/manual/Test Artist - Wishlist Row.mp3"
+    assert listed3[0]["manual_dl"] is False
+
+
+def test_manual_dl_toggle_and_real_file_clears_it(client: TestClient) -> None:
+    csv_body = (
+        "Song,Artist,Album,Duration,Spotify Track Id\n"
+        "Wishlist Row,Test Artist,ALB,4:00,sp_test_manual\n"
+    )
+    imported = client.post(
+        "/api/playlists/import",
+        files={"file": ("pl.csv", csv_body.encode("utf-8"), "text/csv")},
+        data={"import_source": "chosic_csv"},
+    )
+    assert imported.status_code == 200
+
+    listed = client.get("/api/source-tracks").json()
+    assert len(listed) == 1
+    sid = listed[0]["id"]
+    assert listed[0]["manual_dl"] is False
+
+    toggle = client.put(
+        f"/api/source-tracks/{sid}/manual-dl",
+        json={"manual_dl": True},
+    )
+    assert toggle.status_code == 200
+    assert toggle.json() == {"source_track_id": sid, "manual_dl": True}
+
+    listed2 = client.get("/api/source-tracks").json()
+    assert listed2[0]["manual_dl"] is True
+    assert listed2[0]["local_file_path"] is None
+
+    put = client.put(
+        f"/api/source-tracks/{sid}/local-file",
+        json={"path": "Music/manual/Test Artist - Wishlist Row.mp3"},
+    )
+    assert put.status_code == 200
+
+    listed3 = client.get("/api/source-tracks").json()
+    assert listed3[0]["manual_dl"] is False
+    assert listed3[0]["local_file_path"] == "Music/manual/Test Artist - Wishlist Row.mp3"
+
+    clear = client.delete(f"/api/source-tracks/{sid}/local-file")
+    assert clear.status_code == 200
+
+    listed4 = client.get("/api/source-tracks").json()
+    assert listed4[0]["manual_dl"] is False
+    assert listed4[0]["local_file_path"] is None
+
+
+def test_local_scan_match_clears_manual_dl(client: TestClient) -> None:
+    csv_body = (
+        "Song,Artist,Album,Duration,Spotify Track Id\n"
+        "Wishlist Row,Test Artist,ALB,4:00,sp_test_scan_manual\n"
+    )
+    imported = client.post(
+        "/api/playlists/import",
+        files={"file": ("pl.csv", csv_body.encode("utf-8"), "text/csv")},
+        data={"import_source": "chosic_csv"},
+    )
+    assert imported.status_code == 200
+
+    listed = client.get("/api/source-tracks").json()
+    sid = listed[0]["id"]
+
+    toggle = client.put(
+        f"/api/source-tracks/{sid}/manual-dl",
+        json={"manual_dl": True},
+    )
+    assert toggle.status_code == 200
+
+    scan = client.post(
+        "/api/source-tracks/local-scan",
+        json={
+            "files": [{"path": "Music/Test Artist - Wishlist Row.mp3"}],
+            "min_score": 80.0,
+        },
+    )
+    assert scan.status_code == 200
+
+    listed2 = client.get("/api/source-tracks").json()
+    assert listed2[0]["manual_dl"] is False
+    assert listed2[0]["local_file_path"] == "Music/Test Artist - Wishlist Row.mp3"
 
 
 def test_local_scan_unmatched_best_overall_when_correct_row_already_has_file(

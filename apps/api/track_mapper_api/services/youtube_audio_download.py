@@ -169,12 +169,15 @@ def download_and_transcode_youtube_m4a(
 
     raw = _pick_ytdlp_output_file(stem.name, work_dir)
     m4a_out = stem.with_suffix(".m4a")
-    logger.info("transcoding %s -> %s", raw.suffix, m4a_out.name)
-    _ffmpeg_transcode_aac_m4a(raw, m4a_out)
-    try:
-        raw.unlink(missing_ok=True)
-    except OSError:
-        logger.warning("could not remove temp download %s", raw)
+    if raw.resolve() == m4a_out.resolve():
+        logger.info("download already in target format %s", m4a_out.name)
+    else:
+        logger.info("transcoding %s -> %s", raw.suffix, m4a_out.name)
+        _ffmpeg_transcode_aac_m4a(raw, m4a_out)
+        try:
+            raw.unlink(missing_ok=True)
+        except OSError:
+            logger.warning("could not remove temp download %s", raw)
 
     if not m4a_out.is_file():
         raise RuntimeError("Transcode did not produce an m4a file")

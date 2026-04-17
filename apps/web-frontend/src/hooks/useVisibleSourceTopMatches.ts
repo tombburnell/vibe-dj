@@ -97,7 +97,8 @@ type Options = {
  * (debounced). Resets when `listFingerprint` changes (e.g. filter / refetch).
  * Batches are cached via TanStack Query (`topMatchesBatch` keys).
  *
- * Rows already **Missing** or **picked** (merged state) skip network fetch — list GET embeds that state.
+ * Rows already **Missing** or **picked** (merged state) skip network fetch — list GET embeds
+ * those persisted states without recomputing fuzzy matches.
  */
 export function useVisibleSourceTopMatches(
   scrollRef: RefObject<HTMLDivElement | null>,

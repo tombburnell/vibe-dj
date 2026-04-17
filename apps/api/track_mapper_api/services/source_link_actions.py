@@ -32,6 +32,63 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+async def batch_link_state_for_sources_snapshot(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    source_track_ids: list[uuid.UUID],
+    library_snapshot_id: uuid.UUID | None,
+) -> dict[uuid.UUID, tuple[bool, bool]]:
+    """Per source: (is_picked, is_rejected_no_match) for the latest/current snapshot.
+
+    Cheap list helper: reads persisted link state only, no fuzzy matching.
+    """
+    if library_snapshot_id is None or not source_track_ids:
+        return {}
+
+    curr_at = (
+        await db.execute(
+            select(LibrarySnapshot.imported_at).where(
+                LibrarySnapshot.user_id == user_id,
+                LibrarySnapshot.id == library_snapshot_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if curr_at is None:
+        return {}
+
+    picked_rows = await db.execute(
+        select(SourceLibraryLink.source_track_id).where(
+            SourceLibraryLink.user_id == user_id,
+            SourceLibraryLink.source_track_id.in_(source_track_ids),
+            SourceLibraryLink.library_snapshot_id == library_snapshot_id,
+            SourceLibraryLink.library_track_id.isnot(None),
+            SourceLibraryLink.decision.in_(("picked", "confirmed")),
+        )
+    )
+    rejected_rows = await db.execute(
+        select(SourceLibraryLink.source_track_id)
+        .join(
+            LibrarySnapshot,
+            LibrarySnapshot.id == SourceLibraryLink.rejected_through_snapshot_id,
+        )
+        .where(
+            SourceLibraryLink.user_id == user_id,
+            SourceLibraryLink.source_track_id.in_(source_track_ids),
+            SourceLibraryLink.decision == "rejected",
+            SourceLibraryLink.rejected_through_snapshot_id.isnot(None),
+            LibrarySnapshot.imported_at >= curr_at,
+        )
+    )
+
+    picked_ids = {sid for (sid,) in picked_rows.all()}
+    rejected_ids = {sid for (sid,) in rejected_rows.all()}
+    return {
+        sid: (sid in picked_ids, sid in rejected_ids)
+        for sid in source_track_ids
+    }
+
+
 async def delete_all_links_for_source_snapshot(
     db: AsyncSession,
     *,

@@ -14,6 +14,7 @@ import type {
   Playlist,
   PlaylistSyncResult,
   SetLocalFileResult,
+  SetManualDlResult,
   SourceTopMatchRow,
   SourceTrack,
   WebSearchProvider,
@@ -37,6 +38,7 @@ function normalizeSourceTrack(r: SourceTrack): SourceTrack {
   return {
     ...r,
     amazon_candidates: r.amazon_candidates ?? [],
+    manual_dl: r.manual_dl ?? false,
     amazon_price: r.amazon_price ?? null,
     amazon_link_title: r.amazon_link_title ?? null,
     amazon_link_match_score: r.amazon_link_match_score ?? null,
@@ -48,10 +50,8 @@ function normalizeSourceTrack(r: SourceTrack): SourceTrack {
   };
 }
 
-export function fetchSourceTracks(minScore = 0.4): Promise<SourceTrack[]> {
-  const sp = new URLSearchParams();
-  sp.set("min_score", String(minScore));
-  return apiGet<SourceTrack[]>(`/api/source-tracks?${sp.toString()}`).then((rows) =>
+export function fetchSourceTracks(): Promise<SourceTrack[]> {
+  return apiGet<SourceTrack[]>("/api/source-tracks").then((rows) =>
     rows.map((row) => normalizeSourceTrack(row)),
   );
 }
@@ -178,6 +178,16 @@ export function setSourceTrackLocalFile(
   return apiPutJson<SetLocalFileResult>(
     `/api/source-tracks/${encodeURIComponent(sourceTrackId)}/local-file`,
     { path },
+  );
+}
+
+export function setSourceTrackManualDl(
+  sourceTrackId: string,
+  manualDl: boolean,
+): Promise<SetManualDlResult> {
+  return apiPutJson<SetManualDlResult>(
+    `/api/source-tracks/${encodeURIComponent(sourceTrackId)}/manual-dl`,
+    { manual_dl: manualDl },
   );
 }
 

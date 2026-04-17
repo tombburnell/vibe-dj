@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent } from "react";
 import { SiBrave, SiGoogle } from "react-icons/si";
+import { useSearchParams } from "react-router-dom";
 
 import { queryKeys } from "@/api/queryKeys";
 import type { MatchCandidate } from "@/api/types";
@@ -52,12 +53,94 @@ import { useVisibleSourceTopMatches } from "@/hooks/useVisibleSourceTopMatches";
 import { useToast } from "@/providers/ToastProvider";
 import {
   defaultSourceMatchCategoryFilter,
+  SOURCE_MATCH_CATEGORY_KEYS,
   sourcePassesCategoryFilter,
   type SourceMatchCategoryFilterState,
 } from "@/lib/sourceMatchCategory";
+
+const MAIN_VIEW_VALUES: MainView[] = ["sources", "download", "library"];
+const DL_FILTER_VALUES: DlFilter[] = ["all", "downloaded", "not_downloaded"];
+
+function hasDownloadedMarker(source: SourceTrack): boolean {
+  return Boolean(source.local_file_path || source.manual_dl);
+}
+
+function hasMatchedDownload(source: SourceTrack): boolean {
+  return Boolean(source.local_file_path);
+}
+
+function parseMainView(raw: string | null): MainView {
+  if (raw && MAIN_VIEW_VALUES.includes(raw as MainView)) return raw as MainView;
+  return "sources";
+}
+
+function parseDlFilter(raw: string | null): DlFilter {
+  if (raw && DL_FILTER_VALUES.includes(raw as DlFilter)) return raw as DlFilter;
+  return "all";
+}
+
+function parsePlaylistIdsParam(raw: string | null): string[] {
+  if (!raw) return [];
+  return [...new Set(raw.split(",").map((part) => part.trim()).filter(Boolean))];
+}
+
+function equalStringArrays(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+function equalMatchCategoryFilters(
+  a: SourceMatchCategoryFilterState,
+  b: SourceMatchCategoryFilterState,
+): boolean {
+  return SOURCE_MATCH_CATEGORY_KEYS.every((key) => a[key] === b[key]);
+}
+
+function parseMatchCategoryParam(raw: string | null): SourceMatchCategoryFilterState {
+  if (!raw) return defaultSourceMatchCategoryFilter;
+  if (raw === "all") {
+    return {
+      picked: true,
+      ignored: true,
+      rejected: true,
+      uncategorised: true,
+    };
+  }
+  if (raw === "none") {
+    return {
+      picked: false,
+      ignored: false,
+      rejected: false,
+      uncategorised: false,
+    };
+  }
+  const enabled = new Set(
+    raw
+      .split(",")
+      .map((part) => part.trim())
+      .filter((part): part is (typeof SOURCE_MATCH_CATEGORY_KEYS)[number] =>
+        SOURCE_MATCH_CATEGORY_KEYS.includes(part as (typeof SOURCE_MATCH_CATEGORY_KEYS)[number]),
+      ),
+  );
+  if (enabled.size === 0) return defaultSourceMatchCategoryFilter;
+  return {
+    picked: enabled.has("picked"),
+    ignored: enabled.has("ignored"),
+    rejected: enabled.has("rejected"),
+    uncategorised: enabled.has("uncategorised"),
+  };
+}
+
+function serializeMatchCategoryFilter(filter: SourceMatchCategoryFilterState): string | null {
+  if (equalMatchCategoryFilters(filter, defaultSourceMatchCategoryFilter)) return null;
+  const enabled = SOURCE_MATCH_CATEGORY_KEYS.filter((key) => filter[key]);
+  if (enabled.length === 0) return "none";
+  if (enabled.length === SOURCE_MATCH_CATEGORY_KEYS.length) return "all";
+  return enabled.join(",");
+}
+
 function filterSourcesByDl(rows: SourceTrack[], dl: DlFilter): SourceTrack[] {
-  if (dl === "downloaded") return rows.filter((s) => Boolean(s.local_file_path));
-  if (dl === "not_downloaded") return rows.filter((s) => !s.local_file_path);
+  if (dl === "downloaded") return rows.filter(hasDownloadedMarker);
+  if (dl === "not_downloaded") return rows.filter((s) => !hasMatchedDownload(s));
   return rows;
 }
 
@@ -95,17 +178,24 @@ type PlaylistSyncProgressState = {
 export function WorkspacePage() {
   const { showToast } = useToast();
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlMainView = parseMainView(searchParams.get("tab"));
+  const urlDlFilter = parseDlFilter(searchParams.get("dl"));
+  const urlSelectedPlaylistIds = parsePlaylistIdsParam(searchParams.get("playlists"));
+  const urlMatchCategoryFilter = parseMatchCategoryParam(searchParams.get("mc"));
   const [minMatchScore, setMinMatchScore] = useState(0.4);
   const sourceQuery = useSourceTracks(minMatchScore);
   const libraryQuery = useLibraryTracks();
   const playlistsQuery = usePlaylists();
-  const [mainView, setMainView] = useState<MainView>("sources");
+  const [mainView, setMainView] = useState<MainView>(urlMainView);
   const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
   const [selectedLibraryId, setSelectedLibraryId] = useState<string | null>(null);
-  const [dlFilter, setDlFilter] = useState<DlFilter>("all");
+  const [dlFilter, setDlFilter] = useState<DlFilter>(urlDlFilter);
   const [matchCategoryFilter, setMatchCategoryFilter] =
-    useState<SourceMatchCategoryFilterState>(defaultSourceMatchCategoryFilter);
-  const [selectedPlaylistIds, setSelectedPlaylistIds] = useState<string[]>([]);
+    useState<SourceMatchCategoryFilterState>(urlMatchCategoryFilter);
+  const [selectedPlaylistIds, setSelectedPlaylistIds] = useState<string[]>(
+    urlSelectedPlaylistIds,
+  );
   const [topMatchEpoch, setTopMatchEpoch] = useState(0);
   const [matchActionBusy, setMatchActionBusy] = useState(false);
   const [runMatchingBusy, setRunMatchingBusy] = useState(false);
@@ -142,6 +232,94 @@ export function WorkspacePage() {
     () => (playlistsQuery.data ?? []).filter((playlist) => playlist.import_source === "spotify_web_api"),
     [playlistsQuery.data],
   );
+
+  const updateUrlState = useCallback(
+    (nextState: {
+      mainView?: MainView;
+      dlFilter?: DlFilter;
+      selectedPlaylistIds?: string[];
+      matchCategoryFilter?: SourceMatchCategoryFilterState;
+    }) => {
+      const next = new URLSearchParams(searchParams);
+      const nextMainView = nextState.mainView ?? mainView;
+      const nextDlFilter = nextState.dlFilter ?? dlFilter;
+      const nextPlaylistIds = nextState.selectedPlaylistIds ?? selectedPlaylistIds;
+      const nextMatchCategoryFilter = nextState.matchCategoryFilter ?? matchCategoryFilter;
+
+      if (nextMainView === "sources") next.delete("tab");
+      else next.set("tab", nextMainView);
+
+      if (nextDlFilter === "all") next.delete("dl");
+      else next.set("dl", nextDlFilter);
+
+      if (nextPlaylistIds.length === 0) next.delete("playlists");
+      else next.set("playlists", nextPlaylistIds.join(","));
+
+      const mc = serializeMatchCategoryFilter(nextMatchCategoryFilter);
+      if (mc == null) next.delete("mc");
+      else next.set("mc", mc);
+
+      if (next.toString() !== searchParams.toString()) {
+        setSearchParams(next, { replace: true });
+      }
+    },
+    [
+      dlFilter,
+      mainView,
+      matchCategoryFilter,
+      searchParams,
+      selectedPlaylistIds,
+      setSearchParams,
+    ],
+  );
+
+  const onMainViewChange = useCallback(
+    (nextMainView: MainView) => {
+      setMainView(nextMainView);
+      updateUrlState({ mainView: nextMainView });
+    },
+    [updateUrlState],
+  );
+
+  const onDlFilterChange = useCallback(
+    (nextDlFilter: DlFilter) => {
+      setDlFilter(nextDlFilter);
+      updateUrlState({ dlFilter: nextDlFilter });
+    },
+    [updateUrlState],
+  );
+
+  const onSelectedPlaylistIdsChange = useCallback(
+    (nextSelectedPlaylistIds: string[]) => {
+      setSelectedPlaylistIds(nextSelectedPlaylistIds);
+      updateUrlState({ selectedPlaylistIds: nextSelectedPlaylistIds });
+    },
+    [updateUrlState],
+  );
+
+  const onMatchCategoryFilterChange = useCallback(
+    (nextMatchCategoryFilter: SourceMatchCategoryFilterState) => {
+      setMatchCategoryFilter(nextMatchCategoryFilter);
+      updateUrlState({ matchCategoryFilter: nextMatchCategoryFilter });
+    },
+    [updateUrlState],
+  );
+
+  useEffect(() => {
+    if (mainView !== urlMainView) setMainView(urlMainView);
+    if (dlFilter !== urlDlFilter) setDlFilter(urlDlFilter);
+    if (!equalStringArrays(selectedPlaylistIds, urlSelectedPlaylistIds)) {
+      setSelectedPlaylistIds(urlSelectedPlaylistIds);
+    }
+    if (!equalMatchCategoryFilters(matchCategoryFilter, urlMatchCategoryFilter)) {
+      setMatchCategoryFilter(urlMatchCategoryFilter);
+    }
+  }, [
+    urlMainView,
+    urlDlFilter,
+    urlMatchCategoryFilter,
+    urlSelectedPlaylistIds,
+  ]);
 
   const markAmazonLinkBrokenMutation = useMutation({
     mutationFn: ({
@@ -191,9 +369,9 @@ export function WorkspacePage() {
   const filteredSources = useMemo(() => {
     const rows = sourceQuery.data ?? [];
     let base = rows;
-    if (dlFilter === "downloaded") base = base.filter((s) => Boolean(s.local_file_path));
+    if (dlFilter === "downloaded") base = base.filter(hasDownloadedMarker);
     else if (dlFilter === "not_downloaded")
-      base = base.filter((s) => !s.local_file_path);
+      base = base.filter((s) => !hasMatchedDownload(s));
     base = filterSourcesByPlaylists(base, selectedPlaylistIds, playlistsQuery.data ?? undefined);
     return base;
   }, [sourceQuery.data, dlFilter, selectedPlaylistIds, playlistsQuery.data]);
@@ -761,12 +939,12 @@ export function WorkspacePage() {
       <WorkspaceLayout
         toolbar={
           <div className="flex flex-wrap items-center gap-3">
-            <MainViewTabs value={mainView} onChange={setMainView} />
+            <MainViewTabs value={mainView} onChange={onMainViewChange} />
             {mainView === "sources" || mainView === "download" ? (
               <PlaylistFilterDropdown
                 playlists={playlistsQuery.data ?? []}
                 selectedIds={selectedPlaylistIds}
-                onSelectedIdsChange={setSelectedPlaylistIds}
+                onSelectedIdsChange={onSelectedPlaylistIdsChange}
                 isLoading={playlistsQuery.isLoading}
                 error={playlistsQuery.error}
               />
@@ -774,9 +952,9 @@ export function WorkspacePage() {
             {mainView === "sources" || mainView === "download" ? (
               <SourcesFiltersPopover
                 dlFilter={dlFilter}
-                onDlChange={setDlFilter}
+                onDlChange={onDlFilterChange}
                 matchCategoryFilter={matchCategoryFilter}
-                onMatchCategoryChange={setMatchCategoryFilter}
+                onMatchCategoryChange={onMatchCategoryFilterChange}
                 showMatchCategory={mainView === "sources"}
               />
             ) : null}

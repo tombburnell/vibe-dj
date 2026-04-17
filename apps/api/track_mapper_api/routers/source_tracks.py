@@ -25,6 +25,8 @@ from track_mapper_api.schemas import (
     ClearLocalFileOut,
     SetLocalFileIn,
     SetLocalFileOut,
+    SetManualDlIn,
+    SetManualDlOut,
     FindAmazonLinksOut,
     FindAmazonLinksRequest,
     LibraryCandidateOut,
@@ -52,8 +54,10 @@ from track_mapper_api.services.local_download_scan import (
     clear_source_local_file,
     run_local_download_scan,
     set_source_local_file,
+    set_source_manual_dl,
 )
 from track_mapper_api.services.source_link_broken import mark_source_amazon_link_broken
+from track_mapper_api.services.source_link_actions import batch_link_state_for_sources_snapshot
 from track_mapper_api.services.source_track_wishlist import set_wishlist_batch
 from track_mapper_api.config import get_youtube_audio_dir
 from track_mapper_api.services.youtube_audio_download import (
@@ -194,6 +198,7 @@ def _st_out(
         playlist_ids=playlist_ids,
         local_file_path=st.local_file_path,
         downloaded_at=st.downloaded_at,
+        manual_dl=st.manual_dl,
         amazon_url=st.amazon_url,
         amazon_search_url=st.amazon_search_url,
         amazon_price=st.amazon_price,
@@ -270,12 +275,6 @@ def _lt_core_out(lt: LibraryTrack) -> LibraryTrackOut:
 async def list_source_tracks(
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(get_current_user_id),
-    min_score: float = Query(
-        default=0.4,
-        ge=0.0,
-        le=1.0,
-        description="Fuzzy floor for below-minimum flag (same as POST /top-matches).",
-    ),
 ) -> list[SourceTrackOut]:
     result = await db.execute(
         select(SourceTrack)
@@ -288,30 +287,22 @@ async def list_source_tracks(
         db, user_id=user_id, source_ids=source_ids
     )
     snap = await resolve_snapshot_id(db, user_id=user_id, snapshot_id=None)
-    best = await batch_top_match_by_source_id(
+    link_state = await batch_link_state_for_sources_snapshot(
         db,
         user_id=user_id,
+        source_track_ids=source_ids,
         library_snapshot_id=snap,
-        tracks=tracks,
-        min_score=min_score,
     )
     out: list[SourceTrackOut] = []
     for t in tracks:
-        lt, sc, is_picked, is_rejected, below_min = best.get(
-            t.id, (None, None, False, False, False)
-        )
-        lid = str(lt.id) if lt else None
+        is_picked, is_rejected = link_state.get(t.id, (False, False))
         out.append(
             _st_out(
                 t,
                 names_by_source.get(t.id, []),
                 ids_by_source.get(t.id, []),
-                lt=lt,
-                sc=sc,
-                top_match_library_track_id=lid,
                 top_match_is_picked=is_picked,
                 is_rejected_no_match=is_rejected,
-                top_match_below_minimum=below_min,
             )
         )
     return out
@@ -588,6 +579,31 @@ async def delete_source_local_file(
     if not ok:
         raise HTTPException(status_code=404, detail="Source track not found")
     return ClearLocalFileOut(cleared=True)
+
+
+@router.put("/{source_track_id}/manual-dl", response_model=SetManualDlOut)
+async def put_source_manual_dl(
+    source_track_id: str,
+    body: SetManualDlIn,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+) -> SetManualDlOut:
+    try:
+        sid = uuid.UUID(source_track_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="Invalid source_track_id") from e
+    row = await set_source_manual_dl(
+        db,
+        user_id=user_id,
+        source_track_id=sid,
+        manual_dl=body.manual_dl,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Source track not found")
+    return SetManualDlOut(
+        source_track_id=str(row.id),
+        manual_dl=row.manual_dl,
+    )
 
 
 @router.post("/top-matches", response_model=list[SourceTopMatchRowOut])

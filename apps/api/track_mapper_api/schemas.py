@@ -98,6 +98,7 @@ class SourceTrackOut(BaseModel):
     )
     local_file_path: str | None = None
     downloaded_at: datetime | None = None
+    manual_dl: bool = False
     amazon_url: str | None = None
     amazon_search_url: str | None = None
     amazon_price: str | None = None
@@ -177,6 +178,15 @@ class LocalScanOut(BaseModel):
 
 class ClearLocalFileOut(BaseModel):
     cleared: bool
+
+
+class SetManualDlIn(BaseModel):
+    manual_dl: bool
+
+
+class SetManualDlOut(BaseModel):
+    source_track_id: str
+    manual_dl: bool
 
 
 class SetLocalFileIn(BaseModel):

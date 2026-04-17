@@ -28,6 +28,7 @@ class SourceTrack(Base):
     on_wishlist: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     local_file_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     downloaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    manual_dl: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     amazon_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     amazon_search_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     amazon_price: Mapped[str | None] = mapped_column(String(32), nullable=True)

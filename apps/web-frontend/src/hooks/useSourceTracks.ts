@@ -6,7 +6,7 @@ import { fetchSourceTracks } from "@/api/endpoints";
 export function useSourceTracks(minScore: number) {
   const q = useQuery({
     queryKey: queryKeys.sourceTracks(minScore),
-    queryFn: () => fetchSourceTracks(minScore),
+    queryFn: () => fetchSourceTracks(),
     staleTime: 60_000,
   });
   return {

@@ -2,8 +2,8 @@
  * TanStack Query keys — keep stable factories for invalidation prefixes.
  */
 export const queryKeys = {
-  /** Include min_score query param (server embeds match overlay on list). */
-  sourceTracks: (minScore: number) => ["sourceTracks", minScore] as const,
+  /** Base source rows only; top-match overlay loads separately. */
+  sourceTracks: (_minScore?: number) => ["sourceTracks"] as const,
   playlists: ["playlists"] as const,
   libraryTracksInfinite: ["libraryTracks", "infinite"] as const,
   matchCandidates: (sourceId: string, minScore: number) =>
